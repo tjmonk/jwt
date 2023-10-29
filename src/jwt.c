@@ -56,6 +56,7 @@ SOFTWARE.
 #include <openssl/rsa.h>
 #include <openssl/sha.h>
 #include <sys/stat.h>
+#include <tjson/json.h>
 #include <fcntl.h>
 #include <errno.h>
 
@@ -162,7 +163,29 @@ typedef struct _jwt_obj
     /*! length of the validation key */
     size_t keylen;
 
+    /*! verification function */
+    int (*verify)( struct _jwt_obj * );
+
+    /*! verification algorithm name */
+    char *alg;
+
 } JWTObj;
+
+/*! algorithm map */
+typedef struct _alg_map
+{
+    /*! algorithm name */
+    char *name;
+
+    /*! hash function reference */
+    const EVP_MD *(*sha)(void);
+
+    /*! padding value */
+    int padding;
+
+    /*! verification function */
+    int (*verify)(JWTObj *);
+} AlgMap;
 
 /*==============================================================================
         Private function declarations
@@ -179,9 +202,19 @@ static size_t b64url_decode( const uint8_t *in,
                              uint8_t *out,
                              const size_t outlen );
 
+static int parse_header( JWTObj *jwt );
+static int select_algorithm( char *alg, JWTObj *jwt );
+
 /*==============================================================================
         Private file scoped variables
 ==============================================================================*/
+
+/*! list of supported algorithms */
+static const AlgMap algorithms[] = {
+    { "RS512", EVP_sha512, RSA_PKCS1_PADDING, verify_rsa },
+    { "RS384", EVP_sha384, RSA_PKCS1_PADDING, verify_rsa },
+    { "RS256", EVP_sha256, RSA_PKCS1_PADDING, verify_rsa }
+};
 
 /*==============================================================================
         Public function definitions
@@ -220,8 +253,6 @@ int main(int argc, char **argv)
     memset( &jwt, 0, sizeof jwt );
 
     jwt.keyfile = "public.key";
-    jwt.padding = RSA_PKCS1_PADDING;
-    jwt.sha = EVP_sha256();
 
     printf("loading key...\n");
     result = load_key( &jwt );
@@ -244,12 +275,20 @@ int main(int argc, char **argv)
             result = PrintSections( &jwt );
             if ( result == EOK )
             {
-                printf("base64 decoding...\n");
-                result = decode_jwt( &jwt );
+                printf("parsing header...\n");
+                result = parse_header( &jwt );
                 if ( result == EOK )
                 {
-                    printf("verify rsa...\n");
-                    result = verify_rsa( &jwt );
+                    printf("base64 decoding...\n");
+                    result = decode_jwt( &jwt );
+                    if ( result == EOK )
+                    {
+                        printf("verify rsa...\n");
+                        if ( jwt.verify != NULL )
+                        {
+                            result = jwt.verify( &jwt );
+                        }
+                    }
                 }
             }
         }
@@ -419,18 +458,6 @@ static int decode_jwt( JWTObj *jwt )
     {
         /* assume everything is ok until it is not */
         result = EOK;
-
-        /* decode the header */
-        len = b64url_decode( jwt->sections[JWT_HEADER_SECTION],
-                             jwt->sectionlen[JWT_HEADER_SECTION],
-                             jwt->header,
-                             sizeof jwt->header );
-        printf( "header: %s, length: %ld\n", jwt->header, len );
-        jwt->headerlen = len;
-        if ( len == 0 )
-        {
-            result = EINVAL;
-        }
 
         /* decode the payload */
         len = b64url_decode( jwt->sections[JWT_PAYLOAD_SECTION],
@@ -652,7 +679,7 @@ static size_t b64url_decode( const uint8_t *in,
                              const size_t outlen )
 {
     uint32_t bits  = 0;
-    int bit_count  = 0;
+    int numbits  = 0;
     size_t padding = 0;
     size_t n       = 0;
     int8_t val;
@@ -712,22 +739,153 @@ static size_t b64url_decode( const uint8_t *in,
                 bits = (bits << 6) | val;
 
                 /* increment the current bit count */
-                bit_count += 6;
+                numbits += 6;
 
                 /* check if we have collected enough to emit an 8-bit value */
-                if ( bit_count >= 8 )
+                if ( numbits >= 8 )
                 {
                     /* emit an 8 bit value */
-                    out[n++] = (uint8_t) (0xff & (bits >> (bit_count - 8)));
+                    out[n++] = (uint8_t) ((bits >> (numbits - 8)) & 0xFF );
 
                     /* reduce the bit count by the number of bits emitted */
-                    bit_count -= 8;
+                    numbits -= 8;
                 }
             }
         }
     }
 
     return ( i < len ) ? 0 : n;
+}
+
+/*============================================================================*/
+/*  parse_header                                                             */
+/*!
+    parse the JWT header
+
+    The parse_header function parses the JWT header and extracts tne
+    alg and type attributes.
+
+    @param[in]
+        jwt
+            pointer to the JWT object containing the header info
+
+    @retval EOK header parsed ok
+    @retval ENOTSUP unsuppored JWT object
+    @retval EINVAL invalid argument
+
+==============================================================================*/
+static int parse_header( JWTObj *jwt )
+{
+    int result = EINVAL;
+    JNode *pHeader;
+    char *alg;
+    char *typ;
+    bool match;
+    size_t len;
+
+    if ( jwt != NULL )
+    {
+        /* decode the header */
+        len = b64url_decode( jwt->sections[JWT_HEADER_SECTION],
+                             jwt->sectionlen[JWT_HEADER_SECTION],
+                             jwt->header,
+                             sizeof jwt->header );
+        printf( "header: %s, length: %ld\n", jwt->header, len );
+        jwt->headerlen = len;
+        if ( len > 0 )
+        {
+            printf("processing JSON buffer\n");
+            pHeader = JSON_ProcessBuffer( jwt->header );
+            if ( pHeader != NULL )
+            {
+                printf("getting type...\n");
+                typ = JSON_GetStr( pHeader, "typ" );
+                if ( typ != NULL )
+                {
+                    match = ( typ[0] == 'j' || typ[0] == 'J' ) &&
+                            ( typ[1] == 'w' || typ[1] == 'W') &&
+                            ( typ[2] == 't' || typ[2] == 'T');
+                    if ( match == true )
+                    {
+                        /* check the algorithm */
+                        alg = JSON_GetStr( pHeader, "alg" );
+                        result = select_algorithm( alg, jwt );
+                    }
+                }
+                else
+                {
+                    /* no 'typ' attribute found */
+                    result = ENOTSUP;
+                }
+
+                /* free the JSON object */
+                JSON_Free( pHeader );
+            }
+            else
+            {
+                /* cannot parse JSON header */
+                result = ENOTSUP;
+            }
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  select_algorithm                                                          */
+/*!
+    select the appropriate decoding algorithm
+
+    The select_algorithm function selects the appropriate JWT validation
+    algorithm, given the algorithm name.  The following paramaters are
+    selected:
+
+    - SHA algorithm
+    - padding
+    - validation function
+
+    @param[in]
+        alg
+            algorithm name
+
+    @param[out]
+        jwt
+            pointer to the JWT object to be configured
+
+    @retval EOK algorithm selected ok
+    @retval ENOTSUP unsuppored algorithm
+    @retval EINVAL invalid argument
+
+==============================================================================*/
+static int select_algorithm( char *alg, JWTObj *jwt )
+{
+    int result = EINVAL;
+    int i;
+    int len = sizeof( algorithms ) / sizeof ( AlgMap );
+
+    if ( ( alg != NULL ) && ( jwt != NULL ) )
+    {
+        result = ENOTSUP;
+
+        for( i = 0; i < len ; i++ )
+        {
+            printf("Checking algorithm: %s\n", algorithms[i].name );
+            if ( strcmp( alg, algorithms[i].name ) == 0 )
+            {
+                printf( "selected algorithm; %s\n", algorithms[i].name);
+                jwt->sha = algorithms[i].sha();
+                jwt->padding = algorithms[i].padding;
+                jwt->verify = algorithms[i].verify;
+                jwt->alg = algorithms[i].name;
+
+                result = EOK;
+                break;
+            }
+        }
+    }
+
+    return result;
 }
 
 /*! @}
