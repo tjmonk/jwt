@@ -129,6 +129,9 @@ typedef struct _jwt_obj
     /*! length of the full encoded jwt object */
     size_t len;
 
+    /*! length of the signed part of the JWT object */
+    size_t signedlen;
+
     /*! sections of a split JSON Web Token */
     char sections[JWT_MAX_NUM_SECTIONS][JWT_MAX_SECTION_LEN];
 
@@ -167,10 +170,14 @@ typedef struct _jwt_obj
 
 static int split( const char *in, JWTObj *jwt );
 static int PrintSections( JWTObj *jwt );
-static char* base64_decode(char* cipher, char *plain, size_t *len);
 static int decode_jwt( JWTObj *jwt );
 static int verify_rsa( JWTObj *jwt );
 static int load_key( JWTObj *jwt );
+
+static size_t b64url_decode( const uint8_t *in,
+                             size_t len,
+                             uint8_t *out,
+                             const size_t outlen );
 
 /*==============================================================================
         Private file scoped variables
@@ -224,6 +231,15 @@ int main(int argc, char **argv)
         result = split( argv[1], &jwt );
         if ( result == EOK )
         {
+            printf("unencoded header length: %ld\n",
+                    jwt.sectionlen[JWT_HEADER_SECTION]);
+
+            printf("unencoded payload length: %ld\n",
+                    jwt.sectionlen[JWT_PAYLOAD_SECTION]);
+
+            printf("unencoded signature length: %ld\n",
+                    jwt.sectionlen[JWT_SIGNATURE_SECTION]);
+
             printf("printing sections..\n");
             result = PrintSections( &jwt );
             if ( result == EOK )
@@ -291,9 +307,11 @@ static int split( const char *in, JWTObj *jwt )
         {
             if ( c == '.' )
             {
+                /* capture section length */
+                jwt->sectionlen[section] = j;
+
                 /* NUL terminate the current section */
                 jwt->sections[section][j++] = 0;
-                jwt->sectionlen[section] = j;
 
                 /* select the next section */
                 section++;
@@ -324,9 +342,12 @@ static int split( const char *in, JWTObj *jwt )
         /* NUL terminate the last section and capture its length */
         if ( result == EOK )
         {
-            jwt->sections[section][j++] = 0;
             jwt->sectionlen[section] = j;
+            jwt->sections[section][j++] = 0;
             jwt->len = i;
+            jwt->signedlen = jwt->sectionlen[JWT_HEADER_SECTION] +
+                             jwt->sectionlen[JWT_PAYLOAD_SECTION] + 1;
+
         }
 
         /* check that we have all the sections we expect */
@@ -372,90 +393,6 @@ static int PrintSections( JWTObj *jwt )
 }
 
 /*============================================================================*/
-/*  base64_decode                                                             */
-/*!
-    base64 decode an input buffer
-
-    The base64_decode function does a base64 decoding of the input
-    buffer and stores the decoded data in the output buffer.
-
-    @param[in]
-        cipher
-            pointer to the input buffer to be decoded
-
-    @param[in]
-        plain
-            pointer to an output buffer to store the decoded output
-
-    @param[in,out]
-        len
-            pointer to the length of the output buffer
-
-    @retval pointer to the output buffer
-    @retval NULL if an error occurred
-
-==============================================================================*/
-static char* base64_decode(char* cipher, char *plain, size_t *len)
-{
-    char counts = 0;
-    char buffer[4];
-    int i = 0;
-    int j = 0;
-    char k;
-    char *p = NULL;
-    char c;
-
-    static const char base46_map[] =
-        {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
-         'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-         'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-         'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/'};
-
-    if ( ( cipher != NULL ) &&
-         ( plain != NULL ) &&
-         ( len > 0 ) )
-    {
-        p = plain;
-
-        while ( ( ( c = cipher[i++] ) != '\0' ) && ( j < *len ))
-        {
-            for ( k = 0 ;  ( k < 64 ) && ( c != base46_map[k] ) ; k++);
-
-            buffer[counts++] = k;
-
-            if ( counts == 4 )
-            {
-                p[j++] = (buffer[0] << 2) + (buffer[1] >> 4);
-                if (buffer[2] != 64)
-                {
-                    p[j++] = (buffer[1] << 4) + (buffer[2] >> 2);
-                }
-
-                if (buffer[3] != 64)
-                {
-                    p[j++] = (buffer[2] << 6) + buffer[3];
-                }
-
-                counts = 0;
-            }
-        }
-
-        if ( j < *len )
-        {
-            *len = j;
-            p[j++] = '\0';    /* string padding character */
-        }
-        else
-        {
-            *len = j;
-        }
-    }
-
-    return p;
-}
-
-/*============================================================================*/
 /*  decode_jwt                                                                */
 /*!
     Decode a JWT object
@@ -469,7 +406,7 @@ static char* base64_decode(char* cipher, char *plain, size_t *len)
 
 
     @retval EOK the JWT object was decoded successfully
-    @retval EINVAL invalid arguments
+    @retval EINVAL invalid input
 
 ==============================================================================*/
 static int decode_jwt( JWTObj *jwt )
@@ -484,48 +421,38 @@ static int decode_jwt( JWTObj *jwt )
         result = EOK;
 
         /* decode the header */
-        len = sizeof jwt->header;
-        p = base64_decode( jwt->sections[JWT_HEADER_SECTION],
-                           jwt->header,
-                           &len );
-
-        if ( p != NULL )
+        len = b64url_decode( jwt->sections[JWT_HEADER_SECTION],
+                             jwt->sectionlen[JWT_HEADER_SECTION],
+                             jwt->header,
+                             sizeof jwt->header );
+        printf( "header: %s, length: %ld\n", jwt->header, len );
+        jwt->headerlen = len;
+        if ( len == 0 )
         {
-            printf( "header: %s, length: %ld\n", p, len );
-            jwt->headerlen = len;
-        }
-        else
-        {
-            result = EBADMSG;
+            result = EINVAL;
         }
 
-        len = sizeof jwt->payload;
-        p = base64_decode( jwt->sections[JWT_PAYLOAD_SECTION],
-                           jwt->payload,
-                           &len );
-
-        if ( p != NULL )
+        /* decode the payload */
+        len = b64url_decode( jwt->sections[JWT_PAYLOAD_SECTION],
+                             jwt->sectionlen[JWT_PAYLOAD_SECTION],
+                             jwt->payload,
+                             sizeof jwt->payload );
+        printf( "payload: %s, length: %ld\n", jwt->payload, len );
+        jwt->payloadlen = len;
+        if ( len == 0 )
         {
-            printf( "payload: %s, length: %ld\n", p, len );
-            jwt->payloadlen = len;
-        }
-        else
-        {
-            result = EBADMSG;
+            result = EINVAL;
         }
 
-        len = sizeof jwt->sig;
-        p = base64_decode( jwt->sections[JWT_SIGNATURE_SECTION],
-                           jwt->sig,
-                           &len );
-        if ( p != NULL )
+        len = b64url_decode( jwt->sections[JWT_SIGNATURE_SECTION],
+                             jwt->sectionlen[JWT_SIGNATURE_SECTION],
+                             jwt->sig,
+                             sizeof jwt->sig );
+        printf("sig: length: %ld\n", len );
+        jwt->siglen = len;
+        if ( len == 0 )
         {
-            printf("sig: length: %ld\n", len );
-            jwt->siglen = len;
-        }
-        else
-        {
-            result = EBADMSG;
+            result = EINVAL;
         }
     }
 
@@ -614,6 +541,7 @@ static int verify_rsa( JWTObj *jwt )
     EVP_PKEY *pkey         = NULL;
     BIO *keybio            = NULL;
     int rc;
+    size_t len;
 
     if ( jwt != NULL )
     {
@@ -621,9 +549,14 @@ static int verify_rsa( JWTObj *jwt )
         printf("payloadlen: %ld\n", jwt->payloadlen);
         printf("siglen: %ld\n", jwt->siglen);
         printf("len: %ld\n", jwt->len);
+        printf("signedlen = %ld\n", jwt->signedlen);
         printf("padding: %d\n", jwt->padding);
-
+        printf("keylen=%ld\n", jwt->keylen);
+        printf("pToken : %s\n", jwt->pToken);
         printf("creation BIO..\n");
+
+        printf("validating payload: %.*s\n", (int)jwt->signedlen, jwt->pToken );
+
         /* Read the RSA key in from a PEM encoded blob of memory */
         keybio = BIO_new_mem_buf(jwt->key, (int) jwt->keylen);
         if (!keybio)
@@ -635,6 +568,12 @@ static int verify_rsa( JWTObj *jwt )
         if (!pkey)
         {
             BIO_free(keybio);
+            return EINVAL;
+        }
+
+        if ( EVP_PKEY_id( pkey ) != EVP_PKEY_RSA )
+        {
+            printf("invalid key type\n");
             return EINVAL;
         }
 
@@ -657,7 +596,7 @@ static int verify_rsa( JWTObj *jwt )
                     printf("EVP_DigestVerifyUpdate...\n");
                     rc = EVP_DigestVerifyUpdate( md_ctx,
                                                  jwt->pToken,
-                                                 jwt->len);
+                                                 jwt->signedlen);
                     if ( rc == 1 )
                     {
                         printf("EVP_DigestVerifyFinal...\n");
@@ -682,68 +621,114 @@ static int verify_rsa( JWTObj *jwt )
 
 }
 
-#if 0
-static int verify_rsa( JWTObj *jwt )
+/*============================================================================*/
+/*  b64url_decode                                                             */
+/*!
+    base64 decode an input buffer using the base64url alphabet
+
+    The b64url_decode function does a base64 decoding of the input
+    buffer using the base64url alphabet and stores the decoded data
+    in the output buffer.
+
+    @param[in]
+        in
+            pointer to the base64url encoded data to be decoded
+
+    @param[out]
+        out
+            pointer to the output buffer to write into
+
+    @param[in]
+        outlen
+            size of the output buffer
+
+    @retval number of bytes written to the output buffer
+    @retval NULL if an error occurred
+
+==============================================================================*/
+static size_t b64url_decode( const uint8_t *in,
+                             size_t len,
+                             uint8_t *out,
+                             const size_t outlen )
 {
-    int result = EINVAL;
+    uint32_t bits  = 0;
+    int bit_count  = 0;
+    size_t padding = 0;
+    size_t n       = 0;
+    int8_t val;
+    size_t i;
 
-    EVP_MD_CTX *md_ctx     = NULL;
-    EVP_PKEY_CTX *pkey_ctx = NULL;
-    EVP_PKEY *pkey         = NULL;
-    RSA *rsa               = NULL;
-    BIO *keybio            = NULL;
+    static const int8_t map[256] = {
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,
+        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,63,
+        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    };
 
-    if ( ( jwt != NULL ) &&
-         ( jwt->sha != NULL ) &&
-         ( jwt->headerlen > 0 ) &&
-         ( jwt->payloadlen > 0 ) &&
-         ( jwt->siglen > 0 ) &&
-         ( jwt->payloadlen > 0 ) &&
-         ( jwt->len > 0 ) )
+    if ( ( in != NULL ) &&
+         ( out != NULL ) &&
+         ( outlen > 0 ) )
     {
-        /* Read the RSA key in from a PEM encoded blob of memory */
-        keybio = BIO_new_mem_buf(jwt->key, (int) jwt->keylen);
-        if ( keybio != NULL )
+        /* count padding bytes */
+        i = len - 1;
+        while( ( in[i--] == '=' ) && ( padding <= 2 ) )
         {
-            rsa = PEM_read_bio_RSA_PUBKEY(keybio, &rsa, NULL, NULL);
-            BIO_free(keybio);
-            if (!rsa) {
-                return EINVAL;
-            }
+            padding++;
+        }
 
-            pkey   = EVP_PKEY_new();
-            md_ctx = EVP_MD_CTX_create();
-
-            if ( ( md_ctx && pkey
-                 ( EVP_PKEY_assign_RSA( pkey, rsa ) == 1 ) &&
-                 ( EVP_DigestInit_ex( md_ctx, jwt->sha, NULL ) == 1 ) &&
-                 ( EVP_DigestVerifyInit( md_ctx, &pkey_ctx, jwt->sha, NULL, pkey ) == 1 ) &&
-                 ( EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, jwt->padding) > 0 ) &&
-                 ( EVP_DigestVerifyUpdate(md_ctx, jwt->pToken, jwt->len ) == 1 ) &&
-                 ( EVP_DigestVerifyFinal(md_ctx, jwt->sig, jwt->siglen) == 1 ) )
-            {
-                result = EOK;
-            }
-
-            if ( pkey != NULL )
-            {
-                EVP_PKEY_free(pkey);
-            }
-
-            if ( md_ctx != NULL )
-            {
-                EVP_MD_CTX_free(md_ctx);
-            }
+        if ( padding && ( ( len & 0x03 ) != 0 ) )
+        {
+            n = 0;
         }
         else
         {
-            result = ENOMEM;
+            /* don't decode the padding bytes */
+            len -= padding;
+
+            for ( i = 0; ( i < len ) && ( n < outlen ); i++ )
+            {
+                /* get the 6-bit data */
+                val = map[in[i]];
+                if (val < 0)
+                {
+                    /* illegal character in input */
+                    n = 0;
+                    break;
+                }
+
+                /* append new bits to the LSB end of the collected bits */
+                bits = (bits << 6) | val;
+
+                /* increment the current bit count */
+                bit_count += 6;
+
+                /* check if we have collected enough to emit an 8-bit value */
+                if ( bit_count >= 8 )
+                {
+                    /* emit an 8 bit value */
+                    out[n++] = (uint8_t) (0xff & (bits >> (bit_count - 8)));
+
+                    /* reduce the bit count by the number of bits emitted */
+                    bit_count -= 8;
+                }
+            }
         }
     }
 
-    return result;
+    return ( i < len ) ? 0 : n;
 }
-#endif
 
 /*! @}
  * end of jwt group */
