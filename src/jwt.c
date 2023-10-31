@@ -112,6 +112,23 @@ SOFTWARE.
         Private types
 ==============================================================================*/
 
+typedef struct _jwt_claims
+{
+//    char sub[JWT_MAX_SUB_LEN];
+
+//    char iss[JWT_MAX_ISS_LEN];
+
+//    char jti[JWT_MAX_JTI_LEN];
+
+    int64_t exp;
+
+    int64_t nbf;
+
+    int64_t iat;
+
+
+} JWTClaims;
+
 /*! JWT Object */
 typedef struct _jwt_obj
 {
@@ -205,6 +222,8 @@ static size_t b64url_decode( const uint8_t *in,
 static int parse_header( JWTObj *jwt );
 static int select_algorithm( char *alg, JWTObj *jwt );
 
+static int parse_payload( JWTObj *jwt );
+
 /*==============================================================================
         Private file scoped variables
 ==============================================================================*/
@@ -287,6 +306,10 @@ int main(int argc, char **argv)
                         if ( jwt.verify != NULL )
                         {
                             result = jwt.verify( &jwt );
+                            if ( result == EOK )
+                            {
+                                result = parse_payload( &jwt );
+                            }
                         }
                     }
                 }
@@ -882,6 +905,92 @@ static int select_algorithm( char *alg, JWTObj *jwt )
                 result = EOK;
                 break;
             }
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  parse_payload                                                             */
+/*!
+    Parse the JWT payload and extract the claims
+
+    The parse_payload function parses the JWT payload and extracts
+    the claims for validation.
+
+    @param[in]
+        jwt
+            pointer to the JWT object containing the claims payload
+
+    @retval EOK payload parsed ok
+    @retval EINVAL invalid argument
+
+==============================================================================*/
+static int parse_payload( JWTObj *jwt )
+{
+    int result = EINVAL;
+    JNode *pPayload;
+    JObject *pObject;
+    JArray *aud_array;
+    JVar *aud_var;
+    JNode *node;
+    JVar *pVar;
+    int i;
+    int n;
+
+    if ( jwt != NULL )
+    {
+        printf("parsing payload...\n");
+        pPayload = JSON_ProcessBuffer( jwt->payload );
+        if ( ( pPayload != NULL ) &&
+             ( pPayload->type == JSON_OBJECT ) )
+        {
+            printf("payload is an object...\n");
+            pObject = (JObject *)pPayload;
+            node = JSON_Attribute( pObject, "aud");
+            if ( node != NULL )
+            {
+                printf("found aud attribute\n");
+                switch ( node->type )
+                {
+                    case JSON_VAR:
+                        printf("processing aud var\n");
+                        aud_var = (JVar *)node;
+                        if ( aud_var->var.type == JVARTYPE_STR )
+                        {
+                            printf("aud: %s\n", aud_var->var.val.str );
+                        }
+                        break;
+
+                    case JSON_ARRAY:
+                        printf("processing aud array\n");
+                        aud_array = (JArray *)node;
+                        n = JSON_GetArraySize( aud_array );
+                        printf("n=%d\n", n);
+                        for( i = 0; i < n ; i++ )
+                        {
+                            node = JSON_Index( aud_array, i );
+                            if ( node->type == JSON_VAR )
+                            {
+                                pVar = (JVar *)node;
+                                if ( pVar->var.type == JVARTYPE_STR )
+                                {
+                                    printf("aud[%d]: %s\n", i, pVar->var.val.str );
+                                }
+                            }
+                        }
+                        break;
+
+                    default:
+                        printf("node type is %d\n", node->type );
+                        break;
+                }
+            }
+
+            JSON_Free( pPayload );
+
+            result = EOK;
         }
     }
 
