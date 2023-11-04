@@ -48,6 +48,7 @@ SOFTWARE.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 #include <openssl/bio.h>
 #include <openssl/ec.h>
 #include <openssl/evp.h>
@@ -59,6 +60,7 @@ SOFTWARE.
 #include <tjson/json.h>
 #include <fcntl.h>
 #include <errno.h>
+#include "tjwt/tjwt.h"
 
 /*==============================================================================
         Private definitions
@@ -111,23 +113,6 @@ SOFTWARE.
 /*==============================================================================
         Private types
 ==============================================================================*/
-
-typedef struct _jwt_claims
-{
-//    char sub[JWT_MAX_SUB_LEN];
-
-//    char iss[JWT_MAX_ISS_LEN];
-
-//    char jti[JWT_MAX_JTI_LEN];
-
-    int64_t exp;
-
-    int64_t nbf;
-
-    int64_t iat;
-
-
-} JWTClaims;
 
 /*! JWT Object */
 typedef struct _jwt_obj
@@ -186,7 +171,31 @@ typedef struct _jwt_obj
     /*! verification algorithm name */
     char *alg;
 
-} JWTObj;
+    /*! pointer to the JSON payload */
+    JNode *pPayload;
+
+    /* pointer to the name of the public key store */
+    char *pubkeystore;
+
+    /*! pointer to the key ID string */
+    char *kid;
+
+    /*! pointer to the expected audience string */
+    char *aud;
+
+    /*! pointer to the expected issuer string */
+    char *iss;
+
+    /*! pointer to the public key string */
+    char *pubkey;
+
+    /*! JWT claims */
+    JWTClaims claims;
+
+    /*! clock skew */
+    int clockskew;
+
+} TJWT;
 
 /*! algorithm map */
 typedef struct _alg_map
@@ -201,28 +210,30 @@ typedef struct _alg_map
     int padding;
 
     /*! verification function */
-    int (*verify)(JWTObj *);
+    int (*verify)(TJWT *);
 } AlgMap;
 
 /*==============================================================================
         Private function declarations
 ==============================================================================*/
 
-static int split( const char *in, JWTObj *jwt );
-static int PrintSections( JWTObj *jwt );
-static int decode_jwt( JWTObj *jwt );
-static int verify_rsa( JWTObj *jwt );
-static int load_key( JWTObj *jwt );
+static int split( const char *in, TJWT *jwt );
+static int PrintSections( TJWT *jwt );
+static int decode_jwt( TJWT *jwt );
+static int verify_rsa( TJWT *jwt );
+static int load_key( TJWT *jwt );
 
 static size_t b64url_decode( const uint8_t *in,
                              size_t len,
                              uint8_t *out,
                              const size_t outlen );
 
-static int parse_header( JWTObj *jwt );
-static int select_algorithm( char *alg, JWTObj *jwt );
+static int parse_header( TJWT *jwt );
+static int select_algorithm( char *alg, TJWT *jwt );
 
-static int parse_payload( JWTObj *jwt );
+static int parse_payload( TJWT *jwt );
+static int process_aud( TJWT *jwt );
+static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud );
 
 /*==============================================================================
         Private file scoped variables
@@ -238,6 +249,170 @@ static const AlgMap algorithms[] = {
 /*==============================================================================
         Public function definitions
 ==============================================================================*/
+
+int TJWT_Init( TJWT *jwt )
+{
+    int result = EINVAL;
+
+    if ( jwt != NULL )
+    {
+        memset( jwt, 0, sizeof( TJWT ) );
+    }
+
+    return result;
+}
+
+int TJWT_SetPubKeyStore( TJWT *jwt, char *store )
+{
+    int result = EINVAL;
+
+    if ( ( jwt != NULL ) &&
+         ( store != NULL ) )
+    {
+        jwt->pubkeystore = strdup( store );
+        if ( jwt->pubkeystore != NULL )
+        {
+            result = EOK;
+        }
+        else
+        {
+            result = ENOMEM;
+        }
+    }
+
+    return result;
+}
+
+int TJWT_ExpectKid( TJWT *jwt, char *kid )
+{
+    int result = EINVAL;
+
+    if ( ( jwt != NULL ) &&
+         ( kid != NULL ) )
+    {
+        jwt->kid = strdup( kid );
+        result = ( jwt->kid != NULL ) ? EOK : ENOMEM;
+    }
+
+    return result;
+}
+
+int TJWT_SetPubkey( TJWT *jwt, char *pubkey )
+{
+    int result = EINVAL;
+
+    if ( ( jwt != NULL ) &&
+         ( pubkey != NULL ) )
+    {
+        jwt->pubkey = strdup( pubkey );
+        result = ( jwt->kid != NULL ) ? EOK : ENOMEM;
+    }
+
+    return result;
+}
+
+int TJWT_SetClockSkew( TJWT *jwt, int clockskew )
+{
+    int result = EINVAL;
+
+    if ( jwt != NULL )
+    {
+        jwt->clockskew = clockskew;
+        result = EOK;
+    }
+
+    return result;
+}
+
+int TJWT_ExpectAudience( TJWT *jwt, char *aud )
+{
+    int result = EINVAL;
+
+    if ( ( jwt != NULL ) &&
+         ( aud != NULL ) )
+    {
+        jwt->aud = strdup( aud );
+        result = ( jwt->aud != NULL ) ? EOK : ENOMEM;
+    }
+
+    return result;
+}
+
+int TJWT_ExpectIssuer( TJWT *jwt, char *iss )
+{
+    int result = EINVAL;
+
+    if ( ( jwt != NULL ) &&
+         ( iss != NULL ) )
+    {
+        jwt->aud = strdup( iss );
+        result = ( jwt->iss != NULL ) ? EOK : ENOMEM;
+    }
+
+    return result;
+}
+
+int TJWT_Validate( TJWT *jwt, int64_t time, char *token )
+{
+    int result = EINVAL;
+
+    if ( ( jwt != NULL ) &&
+         ( token != NULL ) )
+    {
+        result = EOK;
+    }
+
+    return result;
+}
+
+JWTClaims *TJWT_GetClaims( TJWT *jwt )
+{
+    JWTClaims *claims = NULL;
+
+    if ( jwt != NULL )
+    {
+        claims = &jwt->claims;
+    }
+
+    return claims;
+}
+
+int TJWT_PrintClaims( TJWT *jwt, int fd )
+{
+    int result = EINVAL;
+    int i;
+
+    if ( jwt != NULL )
+    {
+        if ( jwt->claims.iss != NULL )
+        {
+            dprintf( fd, "iss: %s\n", jwt->claims.iss );
+        }
+
+        if ( jwt->claims.sub != NULL )
+        {
+            dprintf( fd, "sub: %s\n", jwt->claims.sub );
+        }
+
+        if ( jwt->claims.jti != NULL )
+        {
+            dprintf( fd, "jti: %s\n", jwt->claims.jti );
+        }
+
+        for ( i = 0; i < jwt->claims.n_aud ; i++ )
+        {
+            dprintf( fd, "aud: %s\n", jwt->claims.aud[i] );
+        }
+
+        dprintf( fd, "iat: %" PRId64 "\n", jwt->claims.iat );
+        dprintf( fd, "exp: %" PRId64 "\n", jwt->claims.exp );
+        dprintf( fd, "nbf: %" PRId64 "\n", jwt->claims.nbf );
+
+        result = EOK;
+    }
+
+    return result;
+}
 
 /*============================================================================*/
 /*  main                                                                      */
@@ -261,7 +436,7 @@ static const AlgMap algorithms[] = {
 int main(int argc, char **argv)
 {
     int result = EINVAL;
-    JWTObj jwt;
+    TJWT jwt;
 
     if ( argc != 2 )
     {
@@ -348,7 +523,7 @@ int main(int argc, char **argv)
     @retval EINVAL invalid arguments
 
 ==============================================================================*/
-static int split( const char *in, JWTObj *jwt )
+static int split( const char *in, TJWT *jwt )
 {
     int i = 0;
     int j = 0;
@@ -438,7 +613,7 @@ static int split( const char *in, JWTObj *jwt )
     @retval EINVAL invalid argument
 
 ==============================================================================*/
-static int PrintSections( JWTObj *jwt )
+static int PrintSections( TJWT *jwt )
 {
     int result = EINVAL;
 
@@ -471,7 +646,7 @@ static int PrintSections( JWTObj *jwt )
     @retval EINVAL invalid input
 
 ==============================================================================*/
-static int decode_jwt( JWTObj *jwt )
+static int decode_jwt( TJWT *jwt )
 {
     int result = EINVAL;
     char *p;
@@ -526,7 +701,7 @@ static int decode_jwt( JWTObj *jwt )
     @retval EINVAL invalid arguments
 
 ==============================================================================*/
-static int load_key( JWTObj *jwt )
+static int load_key( TJWT *jwt )
 {
     int result = EINVAL;
     struct stat sb;
@@ -582,7 +757,7 @@ static int load_key( JWTObj *jwt )
     @retval EINVAL invalid arguments
 
 ==============================================================================*/
-static int verify_rsa( JWTObj *jwt )
+static int verify_rsa( TJWT *jwt )
 {
     int result = EINVAL;
 
@@ -797,7 +972,7 @@ static size_t b64url_decode( const uint8_t *in,
     @retval EINVAL invalid argument
 
 ==============================================================================*/
-static int parse_header( JWTObj *jwt )
+static int parse_header( TJWT *jwt )
 {
     int result = EINVAL;
     JNode *pHeader;
@@ -881,7 +1056,7 @@ static int parse_header( JWTObj *jwt )
     @retval EINVAL invalid argument
 
 ==============================================================================*/
-static int select_algorithm( char *alg, JWTObj *jwt )
+static int select_algorithm( char *alg, TJWT *jwt )
 {
     int result = EINVAL;
     int i;
@@ -927,7 +1102,7 @@ static int select_algorithm( char *alg, JWTObj *jwt )
     @retval EINVAL invalid argument
 
 ==============================================================================*/
-static int parse_payload( JWTObj *jwt )
+static int parse_payload( TJWT *jwt )
 {
     int result = EINVAL;
     JNode *pPayload;
@@ -936,62 +1111,263 @@ static int parse_payload( JWTObj *jwt )
     JVar *aud_var;
     JNode *node;
     JVar *pVar;
+    char *p;
     int i;
     int n;
 
     if ( jwt != NULL )
     {
         printf("parsing payload...\n");
-        pPayload = JSON_ProcessBuffer( jwt->payload );
-        if ( ( pPayload != NULL ) &&
-             ( pPayload->type == JSON_OBJECT ) )
+        jwt->pPayload = JSON_ProcessBuffer( jwt->payload );
+        if ( ( jwt->pPayload != NULL ) &&
+             ( jwt->pPayload->type == JSON_OBJECT ) )
         {
-            printf("payload is an object...\n");
-            pObject = (JObject *)pPayload;
-            node = JSON_Attribute( pObject, "aud");
-            if ( node != NULL )
-            {
-                printf("found aud attribute\n");
-                switch ( node->type )
-                {
-                    case JSON_VAR:
-                        printf("processing aud var\n");
-                        aud_var = (JVar *)node;
-                        if ( aud_var->var.type == JVARTYPE_STR )
-                        {
-                            printf("aud: %s\n", aud_var->var.val.str );
-                        }
-                        break;
+            result = process_aud( jwt );
 
-                    case JSON_ARRAY:
-                        printf("processing aud array\n");
-                        aud_array = (JArray *)node;
-                        n = JSON_GetArraySize( aud_array );
-                        printf("n=%d\n", n);
-                        for( i = 0; i < n ; i++ )
+            JSON_Free( jwt->pPayload );
+            jwt->pPayload = NULL;
+        }
+    }
+
+    return result;
+}
+
+static int process_aud( TJWT *jwt )
+{
+    int result = EINVAL;
+    JObject *pObject;
+    JNode *node;
+    JArray *aud_array;
+    JVar *aud_var;
+    char *p;
+    int n;
+    int count = 0;
+    int i;
+
+    /* check if we have a valid payload object */
+    if ( ( jwt != NULL ) &&
+         ( jwt->pPayload != NULL ) &&
+         ( jwt->pPayload->type == JSON_OBJECT ) )
+    {
+        /* assume everything is ok until it isn't */
+        result = EOK;
+
+        pObject = (JObject *)(jwt->pPayload);
+
+        /* check for 'aud' attribute */
+        node = JSON_Attribute( pObject, "aud");
+        if ( node != NULL )
+        {
+            switch ( node->type )
+            {
+                case JSON_VAR:
+                    /* aud is a single value */
+                    aud_var = (JVar *)node;
+                    if ( aud_var->var.type == JVARTYPE_STR )
+                    {
+                        /* allocate memory for the 'aud' pointer */
+                        jwt->claims.aud = malloc( sizeof( char * ) );
+                        if ( jwt->claims.aud != NULL )
                         {
-                            node = JSON_Index( aud_array, i );
-                            if ( node->type == JSON_VAR )
+                            /* get the 'aud' value */
+                            p = aud_var->var.val.str;
+                            if ( p != NULL )
                             {
-                                pVar = (JVar *)node;
-                                if ( pVar->var.type == JVARTYPE_STR )
+                                /* store the 'aud' value */
+                                jwt->claims.aud[count] = strdup( p );
+                                if ( jwt->claims.aud[count++] != NULL )
                                 {
-                                    printf("aud[%d]: %s\n", i, pVar->var.val.str );
+                                    /* set the number of 'aud' values */
+                                    jwt->claims.n_aud = count;
+                                }
+                                else
+                                {
+                                    /* memory allocation failure */
+                                    result = ENOMEM;
                                 }
                             }
                         }
-                        break;
+                        else
+                        {
+                            /* memory allocation failure */
+                            result = ENOMEM;
+                        }
+                    }
+                    break;
 
-                    default:
-                        printf("node type is %d\n", node->type );
-                        break;
-                }
+                case JSON_ARRAY:
+                    /* we have an array of 'aud' values */
+                    aud_array = (JArray *)node;
+
+                    /* get the number of 'aud' values */
+                    n = JSON_GetArraySize( aud_array );
+                    if ( n > 0 )
+                    {
+                        /* allocate memory for the 'aud' pointers */
+                        jwt->claims.aud = malloc ( n * sizeof( char * ));
+                        if ( jwt->claims.aud != NULL )
+                        {
+                            for( i = 0; i < n ; i++ )
+                            {
+                                node = JSON_Index( aud_array, i );
+                                if ( node->type == JSON_VAR )
+                                {
+                                    aud_var = (JVar *)node;
+                                    if ( aud_var->var.type == JVARTYPE_STR )
+                                    {
+                                        /* get a pointer to the 'aud' value */
+                                        p = strdup( aud_var->var.val.str );
+
+                                        /* store the 'aud' pointer */
+                                        jwt->claims.aud[count++] = p;
+
+                                        /* set the number of 'aud' values */
+                                        jwt->claims.n_aud = count;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        /* empty array */
+                        result = ENOENT;
+                    }
+                    break;
+
+                default:
+                    break;
             }
-
-            JSON_Free( pPayload );
-
-            result = EOK;
         }
+        else
+        {
+            /* no 'aud' values found */
+            result = ENOENT;
+        }
+
+        result = EOK;
+    }
+
+    return result;
+}
+
+static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud )
+{
+    int result = EINVAL;
+    int n;
+    char *p;
+
+    if ( ( claims != NULL ) &&
+         ( aud != NULL ) )
+    {
+        /* assume everything is ok until it isn't */
+        result = EOK;
+
+        /* get the current number of 'aud' values in the claims set */
+        n = claims->n_aud;
+
+        /* check if there is room for more */
+        if ( n < max_aud )
+        {
+            /* allocate memory for the 'aud' claim */
+            p = strdup( aud );
+            if ( p != NULL )
+            {
+                /* store the 'aud' claim */
+                n = claims->n_aud;
+                claims->aud[n] = p;
+                result = EOK;
+            }
+            else
+            {
+                result = ENOMEM;
+            }
+        }
+        else
+        {
+            result = E2BIG;
+        }
+    }
+
+    return result;
+}
+
+int TJWT_Free( TJWT *jwt )
+{
+    int result = EINVAL;
+    JWTClaims *claims;
+    int i;
+
+    if ( jwt != NULL )
+    {
+        /* free aud claims */
+        for ( i=0; i < jwt->claims.n_aud ; i++ )
+        {
+            if ( jwt->claims.aud != NULL )
+            {
+                if ( jwt->claims.aud[i] != NULL )
+                {
+                    free( jwt->claims.aud[i] );
+                    jwt->claims.aud[i] = NULL;
+                }
+
+                free( jwt->claims.aud );
+                jwt->claims.aud = NULL;
+            }
+        }
+
+        if ( jwt->claims.iss != NULL )
+        {
+            free( jwt->claims.iss );
+            jwt->claims.iss = NULL;
+        }
+
+        if ( jwt->claims.jti != NULL )
+        {
+            free( jwt->claims.jti );
+            jwt->claims.jti = NULL;
+        }
+
+        if ( jwt->claims.sub != NULL )
+        {
+            free( jwt->claims.sub );
+            jwt->claims.sub = NULL;
+        }
+
+        if ( jwt->pubkeystore != NULL )
+        {
+            free( jwt->pubkeystore );
+            jwt->pubkeystore = NULL;
+        }
+
+        if ( jwt->kid != NULL )
+        {
+            free( jwt->kid );
+            jwt->kid = NULL;
+        }
+
+        if ( jwt->pubkey != NULL )
+        {
+            free( jwt->pubkey );
+            jwt->pubkey = NULL;
+        }
+
+        if ( jwt->aud != NULL )
+        {
+            free( jwt->aud );
+            jwt->aud = NULL;
+        }
+
+        if ( jwt->iss != NULL )
+        {
+            free( jwt->iss );
+            jwt->iss = NULL;
+        }
+
+        /* clear the JWT object ready for re-use */
+        memset( jwt, 0, sizeof( TJWT ) );
+
+        result = EOK;
     }
 
     return result;
