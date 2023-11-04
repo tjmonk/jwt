@@ -1,27 +1,15 @@
 cmake_minimum_required(VERSION 3.10)
 
-include(GNUInstallDirs)
+set(TJWT_VERSION 0.1)
 
-project(jwt
-	VERSION 0.1
-    DESCRIPTION "JSON Web Token Decoder"
+project(TJWT
+    VERSION ${TJWT_VERSION}
+    DESCRIPTION "JWT Validator"
 )
 
-add_executable( ${PROJECT_NAME}
-	src/jwt.c
-)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-target_include_directories( ${PROJECT_NAME}
-	PRIVATE inc
-)
-
-target_link_libraries( ${PROJECT_NAME}
-	${CMAKE_THREAD_LIBS_INIT}
-    tjson
-    ssl
-    crypto
-)
-
-install(TARGETS ${PROJECT_NAME}
-	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+add_subdirectory(libtjwt)
+add_subdirectory(test)

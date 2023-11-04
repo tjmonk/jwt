@@ -23,7 +23,7 @@ SOFTWARE.
 ==============================================================================*/
 
 /*!
- * @defgroup jwt JSON Web Token
+ * @defgroup tjwt JSON Web Token
  * @brief JSON Web Token decoder
  * @{
  */
@@ -136,25 +136,25 @@ typedef struct _jwt_obj
     size_t signedlen;
 
     /*! sections of a split JSON Web Token */
-    char sections[JWT_MAX_NUM_SECTIONS][JWT_MAX_SECTION_LEN];
+    uint8_t sections[JWT_MAX_NUM_SECTIONS][JWT_MAX_SECTION_LEN];
 
     /*! stores the length of each encoded JWT section */
     size_t sectionlen[JWT_MAX_NUM_SECTIONS];
 
     /*! base64 decoded header */
-    char header[JWT_MAX_HEADER_LEN];
+    uint8_t header[JWT_MAX_HEADER_LEN];
 
     /*! decoded header length */
     size_t headerlen;
 
     /*! base64 decoded payload */
-    char payload[JWT_MAX_PAYLOAD_LEN];
+    uint8_t payload[JWT_MAX_PAYLOAD_LEN];
 
     /*! length of the decoded payload */
     size_t payloadlen;
 
     /*! base64 decoded signature */
-    char sig[JWT_MAX_SIG_LEN];
+    uint8_t sig[JWT_MAX_SIG_LEN];
 
     /*! length of the decoded signature */
     size_t siglen;
@@ -233,7 +233,20 @@ static int select_algorithm( char *alg, TJWT *jwt );
 
 static int parse_payload( TJWT *jwt );
 static int process_aud( TJWT *jwt );
+static int process_aud_var( TJWT *jwt, JVar *pVar );
+static int process_aud_array( TJWT *jwt, JArray *pArray );
+
 static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud );
+
+static char *get_claim_string( TJWT *jwt, char *name );
+static int get_claim_int( TJWT *jwt, char *name, int *n );
+
+static int process_iss( TJWT *jwt );
+static int process_sub( TJWT *jwt );
+static int process_jti( TJWT *jwt );
+static int process_nbf( TJWT *jwt );
+static int process_exp( TJWT *jwt );
+static int process_iat( TJWT *jwt );
 
 /*==============================================================================
         Private file scoped variables
@@ -250,16 +263,9 @@ static const AlgMap algorithms[] = {
         Public function definitions
 ==============================================================================*/
 
-int TJWT_Init( TJWT *jwt )
+TJWT *TJWT_Init()
 {
-    int result = EINVAL;
-
-    if ( jwt != NULL )
-    {
-        memset( jwt, 0, sizeof( TJWT ) );
-    }
-
-    return result;
+    return calloc( 1, sizeof( TJWT ) );
 }
 
 int TJWT_SetPubKeyStore( TJWT *jwt, char *store )
@@ -356,10 +362,46 @@ int TJWT_Validate( TJWT *jwt, int64_t time, char *token )
 {
     int result = EINVAL;
 
+    (void)time;
+
     if ( ( jwt != NULL ) &&
          ( token != NULL ) )
     {
-        result = EOK;
+        jwt->keyfile = "public.key";
+
+        result = load_key( jwt );
+        if ( result == EOK )
+        {
+            result = split( token, jwt );
+            if ( result == EOK )
+            {
+                result = PrintSections( jwt );
+                if ( result == EOK )
+                {
+                    result = parse_header( jwt );
+                    if ( result == EOK )
+                    {
+                        result = decode_jwt( jwt );
+                        if ( result == EOK )
+                        {
+                            if ( jwt->verify != NULL )
+                            {
+                                result = jwt->verify( jwt );
+                                if ( result == EOK )
+                                {
+                                    result = parse_payload( jwt );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if( result != EOK )
+        {
+            printf("result: %s\n", strerror(result));
+        }
     }
 
     return result;
@@ -399,9 +441,12 @@ int TJWT_PrintClaims( TJWT *jwt, int fd )
             dprintf( fd, "jti: %s\n", jwt->claims.jti );
         }
 
-        for ( i = 0; i < jwt->claims.n_aud ; i++ )
+        if ( jwt->claims.aud != NULL )
         {
-            dprintf( fd, "aud: %s\n", jwt->claims.aud[i] );
+            for ( i = 0; i < jwt->claims.n_aud ; i++ )
+            {
+                dprintf( fd, "aud: %s\n", jwt->claims.aud[i] );
+            }
         }
 
         dprintf( fd, "iat: %" PRId64 "\n", jwt->claims.iat );
@@ -412,92 +457,6 @@ int TJWT_PrintClaims( TJWT *jwt, int fd )
     }
 
     return result;
-}
-
-/*============================================================================*/
-/*  main                                                                      */
-/*!
-    Main entry point for the jwt decoder
-
-    The main function runs the jwt decoder
-
-    @param[in]
-        argc
-            number of arguments on the command line
-            (including the command itself)
-
-    @param[in]
-        argv
-            array of pointers to the command line arguments
-
-    @return 0
-
-==============================================================================*/
-int main(int argc, char **argv)
-{
-    int result = EINVAL;
-    TJWT jwt;
-
-    if ( argc != 2 )
-    {
-        printf( "usage: jwt <encoded jwt>\n");
-        exit(1);
-    }
-
-    memset( &jwt, 0, sizeof jwt );
-
-    jwt.keyfile = "public.key";
-
-    printf("loading key...\n");
-    result = load_key( &jwt );
-    if ( result == EOK )
-    {
-        printf("splitting token...\n");
-        result = split( argv[1], &jwt );
-        if ( result == EOK )
-        {
-            printf("unencoded header length: %ld\n",
-                    jwt.sectionlen[JWT_HEADER_SECTION]);
-
-            printf("unencoded payload length: %ld\n",
-                    jwt.sectionlen[JWT_PAYLOAD_SECTION]);
-
-            printf("unencoded signature length: %ld\n",
-                    jwt.sectionlen[JWT_SIGNATURE_SECTION]);
-
-            printf("printing sections..\n");
-            result = PrintSections( &jwt );
-            if ( result == EOK )
-            {
-                printf("parsing header...\n");
-                result = parse_header( &jwt );
-                if ( result == EOK )
-                {
-                    printf("base64 decoding...\n");
-                    result = decode_jwt( &jwt );
-                    if ( result == EOK )
-                    {
-                        printf("verify rsa...\n");
-                        if ( jwt.verify != NULL )
-                        {
-                            result = jwt.verify( &jwt );
-                            if ( result == EOK )
-                            {
-                                result = parse_payload( &jwt );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if( result != EOK )
-    {
-        printf("result: %s\n", strerror(result));
-    }
-
-    return result == EOK ? 0 : 1;
 }
 
 /*============================================================================*/
@@ -528,7 +487,6 @@ static int split( const char *in, TJWT *jwt )
     int i = 0;
     int j = 0;
     int section = 0;
-    size_t len;
     int result = EINVAL;
     char c;
 
@@ -566,7 +524,7 @@ static int split( const char *in, TJWT *jwt )
             else
             {
                 /* store the encoded byte in the output */
-                jwt->sections[section][j++] = c;
+                jwt->sections[section][j++] = (uint8_t)c;
                 if ( j >= JWT_MAX_SECTION_LEN )
                 {
                     /* section is too big */
@@ -649,7 +607,6 @@ static int PrintSections( TJWT *jwt )
 static int decode_jwt( TJWT *jwt )
 {
     int result = EINVAL;
-    char *p;
     size_t len;
 
     if ( jwt != NULL )
@@ -662,7 +619,6 @@ static int decode_jwt( TJWT *jwt )
                              jwt->sectionlen[JWT_PAYLOAD_SECTION],
                              jwt->payload,
                              sizeof jwt->payload );
-        printf( "payload: %s, length: %ld\n", jwt->payload, len );
         jwt->payloadlen = len;
         if ( len == 0 )
         {
@@ -673,7 +629,6 @@ static int decode_jwt( TJWT *jwt )
                              jwt->sectionlen[JWT_SIGNATURE_SECTION],
                              jwt->sig,
                              sizeof jwt->sig );
-        printf("sig: length: %ld\n", len );
         jwt->siglen = len;
         if ( len == 0 )
         {
@@ -766,22 +721,9 @@ static int verify_rsa( TJWT *jwt )
     EVP_PKEY *pkey         = NULL;
     BIO *keybio            = NULL;
     int rc;
-    size_t len;
 
     if ( jwt != NULL )
     {
-        printf("headerlen: %ld\n", jwt->headerlen);
-        printf("payloadlen: %ld\n", jwt->payloadlen);
-        printf("siglen: %ld\n", jwt->siglen);
-        printf("len: %ld\n", jwt->len);
-        printf("signedlen = %ld\n", jwt->signedlen);
-        printf("padding: %d\n", jwt->padding);
-        printf("keylen=%ld\n", jwt->keylen);
-        printf("pToken : %s\n", jwt->pToken);
-        printf("creation BIO..\n");
-
-        printf("validating payload: %.*s\n", (int)jwt->signedlen, jwt->pToken );
-
         /* Read the RSA key in from a PEM encoded blob of memory */
         keybio = BIO_new_mem_buf(jwt->key, (int) jwt->keylen);
         if (!keybio)
@@ -805,7 +747,6 @@ static int verify_rsa( TJWT *jwt )
         md_ctx = EVP_MD_CTX_create();
         if ( md_ctx != NULL )
         {
-            printf("EVP_DigestVerifyInit...\n");
             rc = EVP_DigestVerifyInit( md_ctx,
                                        &pkey_ctx,
                                        jwt->sha,
@@ -813,18 +754,14 @@ static int verify_rsa( TJWT *jwt )
                                        pkey);
             if ( rc == 1 )
             {
-                printf("EVP_PKEY_CTX_set_rsa_padding..\n");
-
                 rc = EVP_PKEY_CTX_set_rsa_padding( pkey_ctx, jwt->padding );
                 if ( rc > 0 )
                 {
-                    printf("EVP_DigestVerifyUpdate...\n");
                     rc = EVP_DigestVerifyUpdate( md_ctx,
                                                  jwt->pToken,
                                                  jwt->signedlen);
                     if ( rc == 1 )
                     {
-                        printf("EVP_DigestVerifyFinal...\n");
                         rc = EVP_DigestVerifyFinal( md_ctx,
                                                     jwt->sig,
                                                     jwt->siglen );
@@ -988,15 +925,12 @@ static int parse_header( TJWT *jwt )
                              jwt->sectionlen[JWT_HEADER_SECTION],
                              jwt->header,
                              sizeof jwt->header );
-        printf( "header: %s, length: %ld\n", jwt->header, len );
         jwt->headerlen = len;
         if ( len > 0 )
         {
-            printf("processing JSON buffer\n");
-            pHeader = JSON_ProcessBuffer( jwt->header );
+            pHeader = JSON_ProcessBuffer( (char *)(jwt->header) );
             if ( pHeader != NULL )
             {
-                printf("getting type...\n");
                 typ = JSON_GetStr( pHeader, "typ" );
                 if ( typ != NULL )
                 {
@@ -1068,10 +1002,8 @@ static int select_algorithm( char *alg, TJWT *jwt )
 
         for( i = 0; i < len ; i++ )
         {
-            printf("Checking algorithm: %s\n", algorithms[i].name );
             if ( strcmp( alg, algorithms[i].name ) == 0 )
             {
-                printf( "selected algorithm; %s\n", algorithms[i].name);
                 jwt->sha = algorithms[i].sha();
                 jwt->padding = algorithms[i].padding;
                 jwt->verify = algorithms[i].verify;
@@ -1105,27 +1037,169 @@ static int select_algorithm( char *alg, TJWT *jwt )
 static int parse_payload( TJWT *jwt )
 {
     int result = EINVAL;
-    JNode *pPayload;
-    JObject *pObject;
-    JArray *aud_array;
-    JVar *aud_var;
-    JNode *node;
-    JVar *pVar;
-    char *p;
-    int i;
+
+    if ( jwt != NULL )
+    {
+        jwt->pPayload = JSON_ProcessBuffer( (char *)(jwt->payload) );
+        if ( ( jwt->pPayload != NULL ) &&
+             ( jwt->pPayload->type == JSON_OBJECT ) )
+        {
+            process_aud( jwt );
+            process_iss( jwt );
+            process_sub( jwt );
+            process_jti( jwt );
+            process_nbf( jwt );
+            process_exp( jwt );
+            process_iat( jwt );
+
+            JSON_Free( jwt->pPayload );
+            jwt->pPayload = NULL;
+
+            result = EOK;
+        }
+    }
+
+    return result;
+}
+
+static int get_claim_int( TJWT *jwt, char *name, int *n )
+{
+    static int result;
+
+    if ( ( jwt != NULL ) &&
+         ( name != NULL ) &&
+         ( n != NULL ) )
+    {
+        result = JSON_GetNum( jwt->pPayload, name, n );
+    }
+
+    return result;
+}
+
+static char *get_claim_string( TJWT *jwt, char *name )
+{
+    char *result = NULL;
+
+    if ( ( jwt != NULL ) &&
+         ( name != NULL ) )
+    {
+        result = JSON_GetStr( jwt->pPayload, name );
+    }
+
+    return result;
+}
+
+static int process_iss( TJWT *jwt )
+{
+    int result = EINVAL;
+    char *iss;
+
+    if ( jwt != NULL )
+    {
+        iss = get_claim_string( jwt, "iss" );
+        if ( iss != NULL )
+        {
+            jwt->claims.iss = strdup( iss );
+            result = ( jwt->claims.iss != NULL ) ? EOK : ENOMEM;
+        }
+        else
+        {
+            result = ENOENT;
+        }
+    }
+
+    return result;
+}
+
+static int process_sub( TJWT *jwt )
+{
+    int result = EINVAL;
+    char *sub;
+
+    if ( jwt != NULL )
+    {
+        sub = get_claim_string( jwt, "sub" );
+        if ( sub != NULL )
+        {
+            jwt->claims.sub = strdup( sub );
+            result = ( jwt->claims.sub != NULL ) ? EOK : ENOMEM;
+        }
+        else
+        {
+            result = ENOENT;
+        }
+    }
+
+    return result;
+}
+
+static int process_jti( TJWT *jwt )
+{
+    int result = EINVAL;
+    char *jti;
+
+    if ( jwt != NULL )
+    {
+        jti = get_claim_string( jwt, "jti" );
+        if ( jti != NULL )
+        {
+            jwt->claims.jti = strdup( jti );
+            result = ( jwt->claims.jti != NULL ) ? EOK : ENOMEM;
+        }
+        else
+        {
+            result = ENOENT;
+        }
+    }
+
+    return result;
+}
+
+static int process_nbf( TJWT *jwt )
+{
+    int result = EINVAL;
     int n;
 
     if ( jwt != NULL )
     {
-        printf("parsing payload...\n");
-        jwt->pPayload = JSON_ProcessBuffer( jwt->payload );
-        if ( ( jwt->pPayload != NULL ) &&
-             ( jwt->pPayload->type == JSON_OBJECT ) )
+        result = get_claim_int( jwt, "nbf",  &n );
+        if ( result == EOK )
         {
-            result = process_aud( jwt );
+            jwt->claims.nbf = n;
+        }
+    }
 
-            JSON_Free( jwt->pPayload );
-            jwt->pPayload = NULL;
+    return result;
+}
+
+static int process_exp( TJWT *jwt )
+{
+    int result = EINVAL;
+    int n;
+
+    if ( jwt != NULL )
+    {
+        result = get_claim_int( jwt, "exp",  &n );
+        if ( result == EOK )
+        {
+            jwt->claims.exp = n;
+        }
+    }
+
+    return result;
+}
+
+static int process_iat( TJWT *jwt )
+{
+    int result = EINVAL;
+    int n;
+
+    if ( jwt != NULL )
+    {
+        result = get_claim_int( jwt, "iat",  &n );
+        if ( result == EOK )
+        {
+            jwt->claims.iat = n;
         }
     }
 
@@ -1137,21 +1211,12 @@ static int process_aud( TJWT *jwt )
     int result = EINVAL;
     JObject *pObject;
     JNode *node;
-    JArray *aud_array;
-    JVar *aud_var;
-    char *p;
-    int n;
-    int count = 0;
-    int i;
 
     /* check if we have a valid payload object */
     if ( ( jwt != NULL ) &&
          ( jwt->pPayload != NULL ) &&
          ( jwt->pPayload->type == JSON_OBJECT ) )
     {
-        /* assume everything is ok until it isn't */
-        result = EOK;
-
         pObject = (JObject *)(jwt->pPayload);
 
         /* check for 'aud' attribute */
@@ -1162,77 +1227,12 @@ static int process_aud( TJWT *jwt )
             {
                 case JSON_VAR:
                     /* aud is a single value */
-                    aud_var = (JVar *)node;
-                    if ( aud_var->var.type == JVARTYPE_STR )
-                    {
-                        /* allocate memory for the 'aud' pointer */
-                        jwt->claims.aud = malloc( sizeof( char * ) );
-                        if ( jwt->claims.aud != NULL )
-                        {
-                            /* get the 'aud' value */
-                            p = aud_var->var.val.str;
-                            if ( p != NULL )
-                            {
-                                /* store the 'aud' value */
-                                jwt->claims.aud[count] = strdup( p );
-                                if ( jwt->claims.aud[count++] != NULL )
-                                {
-                                    /* set the number of 'aud' values */
-                                    jwt->claims.n_aud = count;
-                                }
-                                else
-                                {
-                                    /* memory allocation failure */
-                                    result = ENOMEM;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            /* memory allocation failure */
-                            result = ENOMEM;
-                        }
-                    }
+                    result = process_aud_var( jwt, (JVar *)node );
                     break;
 
                 case JSON_ARRAY:
                     /* we have an array of 'aud' values */
-                    aud_array = (JArray *)node;
-
-                    /* get the number of 'aud' values */
-                    n = JSON_GetArraySize( aud_array );
-                    if ( n > 0 )
-                    {
-                        /* allocate memory for the 'aud' pointers */
-                        jwt->claims.aud = malloc ( n * sizeof( char * ));
-                        if ( jwt->claims.aud != NULL )
-                        {
-                            for( i = 0; i < n ; i++ )
-                            {
-                                node = JSON_Index( aud_array, i );
-                                if ( node->type == JSON_VAR )
-                                {
-                                    aud_var = (JVar *)node;
-                                    if ( aud_var->var.type == JVARTYPE_STR )
-                                    {
-                                        /* get a pointer to the 'aud' value */
-                                        p = strdup( aud_var->var.val.str );
-
-                                        /* store the 'aud' pointer */
-                                        jwt->claims.aud[count++] = p;
-
-                                        /* set the number of 'aud' values */
-                                        jwt->claims.n_aud = count;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        /* empty array */
-                        result = ENOENT;
-                    }
+                    result = process_aud_array( jwt, (JArray *)node );
                     break;
 
                 default:
@@ -1246,6 +1246,89 @@ static int process_aud( TJWT *jwt )
         }
 
         result = EOK;
+    }
+
+    return result;
+}
+
+static int process_aud_var( TJWT *jwt, JVar *pVar )
+{
+    int result = EINVAL;
+
+    if ( ( jwt != NULL ) &&
+         ( pVar != NULL ) )
+    {
+        if ( ( pVar->node.type == JSON_VAR ) &&
+             ( pVar->var.type == JVARTYPE_STR ) )
+        {
+            /* allocate memory for the 'aud' pointer */
+            jwt->claims.aud = malloc( sizeof( char * ) );
+            if ( jwt->claims.aud != NULL )
+            {
+                result = add_aud_claim( &jwt->claims,
+                                        pVar->var.val.str,
+                                        1 );
+            }
+            else
+            {
+                /* memory allocation failure */
+                result = ENOMEM;
+            }
+        }
+    }
+
+    return result;
+}
+
+static int process_aud_array( TJWT *jwt, JArray *pArray )
+{
+    int result = EINVAL;
+    int n;
+    int i;
+    JNode *pNode;
+    JVar *pVar;
+
+    if ( ( jwt != NULL ) &&
+         ( pArray != NULL ) &&
+         ( pArray->node.type == JSON_ARRAY) )
+    {
+        /* get the number of 'aud' values */
+        n = JSON_GetArraySize( pArray );
+        if ( n > 0 )
+        {
+            /* allocate memory for the 'aud' pointers */
+            jwt->claims.aud = malloc ( n * sizeof( char * ));
+            if ( jwt->claims.aud != NULL )
+            {
+                for( i = 0; i < n ; i++ )
+                {
+                    pNode = JSON_Index( pArray, i );
+                    if ( pNode != NULL )
+                    {
+                        if ( pNode->type == JSON_VAR )
+                        {
+                            pVar = (JVar *)pNode;
+                            if ( pVar->var.type == JVARTYPE_STR )
+                            {
+                                result = add_aud_claim( &jwt->claims,
+                                                        pVar->var.val.str,
+                                                        n );
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                result = ENOMEM;
+            }
+        }
+        else
+        {
+            /* empty array */
+            result = ENOENT;
+        }
+
     }
 
     return result;
@@ -1276,6 +1359,7 @@ static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud )
                 /* store the 'aud' claim */
                 n = claims->n_aud;
                 claims->aud[n] = p;
+                claims->n_aud = n + 1;
                 result = EOK;
             }
             else
@@ -1295,7 +1379,6 @@ static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud )
 int TJWT_Free( TJWT *jwt )
 {
     int result = EINVAL;
-    JWTClaims *claims;
     int i;
 
     if ( jwt != NULL )
@@ -1367,6 +1450,9 @@ int TJWT_Free( TJWT *jwt )
         /* clear the JWT object ready for re-use */
         memset( jwt, 0, sizeof( TJWT ) );
 
+        /* deallocate the JWT object */
+        free( jwt );
+
         result = EOK;
     }
 
@@ -1374,4 +1460,4 @@ int TJWT_Free( TJWT *jwt )
 }
 
 /*! @}
- * end of jwt group */
+ * end of tjwt group */

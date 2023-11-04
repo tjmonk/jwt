@@ -34,6 +34,11 @@ SOFTWARE.
         Public definitions
 ==============================================================================*/
 
+#ifndef EOK
+/*! successful return */
+#define EOK 0
+#endif
+
 /* opaque TJWT object */
 typedef struct _jwt_obj TJWT;
 
@@ -70,7 +75,7 @@ typedef struct _jwt_claims
         Public function declarations
 ==============================================================================*/
 
-int TJWT_Init( TJWT *jwt );
+TJWT *TJWT_Init();
 
 int TJWT_ExpectKid( TJWT *jwt, char *kid );
 int TJWT_ExpectAudience( TJWT *jwt, char *aud );
@@ -82,6 +87,8 @@ int TJWT_SetPubKeyStore( TJWT *jwt, char *store );
 int TJWT_SetClockSkew( TJWT *jwt, int skew );
 int TJWT_Validate( TJWT *jwt, int64_t time, char *token );
 JWTClaims *TJWT_GetClaims( TJWT *jwt );
+int TJWT_PrintClaims( TJWT *jwt, int fd );
+
 int TJWT_Free( TJWT *jwt );
 
 #endif
