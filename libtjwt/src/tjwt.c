@@ -263,11 +263,47 @@ static const AlgMap algorithms[] = {
         Public function definitions
 ==============================================================================*/
 
-TJWT *TJWT_Init()
+/*============================================================================*/
+/*  TJWT_Init                                                                 */
+/*!
+    Initialize a TJWT object
+
+    The TJWT_Init function creates a TJWT object to manage a JWT decode
+    operation.  It allocates the TJWT object on the heap, which must be
+    freed by the caller using the TJWT_Free function.
+
+    @retval pointer to the TJWT object
+    @retval NULL if the object could not be created.
+
+==============================================================================*/
+TJWT *TJWT_Init( void )
 {
     return calloc( 1, sizeof( TJWT ) );
 }
 
+/*============================================================================*/
+/*  TJWT_SetPubKeyStore                                                       */
+/*!
+    Set the public key store reference
+
+    The TJWT_SetPubKeyStore function sets the public key store reference.
+    This is the location where public keys referenced via the JWT 'kid'
+    attribute are stored.  This is the fully qualified path of a
+    directory containing the public key files.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to update
+
+    @param[in]
+        store
+            pointer to the directory name of the public key store
+
+    @retval EOK public key store name updated
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
 int TJWT_SetPubKeyStore( TJWT *jwt, char *store )
 {
     int result = EINVAL;
@@ -289,6 +325,28 @@ int TJWT_SetPubKeyStore( TJWT *jwt, char *store )
     return result;
 }
 
+/*============================================================================*/
+/*  TJWT_ExpectKid                                                            */
+/*!
+    Set the expected key id
+
+    The TJWT_ExpectKid function sets the expected key id associated with
+    the TJWT object.  If a JWT is received with a different (or non-existent)
+    key id, then the key validation will fail.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to update
+
+    @param[in]
+        kid
+            pointer to the key id value to expect
+
+    @retval EOK key id updated
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
 int TJWT_ExpectKid( TJWT *jwt, char *kid )
 {
     int result = EINVAL;
@@ -303,6 +361,27 @@ int TJWT_ExpectKid( TJWT *jwt, char *kid )
     return result;
 }
 
+/*============================================================================*/
+/*  TJWT_SetPubkey                                                            */
+/*!
+    Set the public key to use to validate the JWT signature
+
+    The TJWT_SetPubkey function sets the public key to use to validate the
+    JWT signature.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to update
+
+    @param[in]
+        pubkey
+            pointer to the public key to use to validate the JWT signature
+
+    @retval EOK public key updated
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
 int TJWT_SetPubkey( TJWT *jwt, char *pubkey )
 {
     int result = EINVAL;
@@ -317,6 +396,26 @@ int TJWT_SetPubkey( TJWT *jwt, char *pubkey )
     return result;
 }
 
+/*============================================================================*/
+/*  TJWT_SetClockSkew                                                         */
+/*!
+    Set the clock skew to allow when validating token time stamps
+
+    The TJWT_SetClockSkew function sets the clock skew ( in seconds ) to
+    allow when validating JWT timestamps.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to update
+
+    @param[in]
+        clockskew
+            clock skew in seconds
+
+    @retval EOK clock skew updated
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
 int TJWT_SetClockSkew( TJWT *jwt, int clockskew )
 {
     int result = EINVAL;
@@ -330,6 +429,28 @@ int TJWT_SetClockSkew( TJWT *jwt, int clockskew )
     return result;
 }
 
+/*============================================================================*/
+/*  TJWT_ExpectAudience                                                       */
+/*!
+    Set the expected key audience
+
+    The TJWT_ExpectAudience function sets the expected audience associated with
+    the TJWT object.  If a JWT is received with a different (or non-existent)
+    audience, then the key validation will fail.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to update
+
+    @param[in]
+        aud
+            pointer to the audience value to expect
+
+    @retval EOK audience updated
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
 int TJWT_ExpectAudience( TJWT *jwt, char *aud )
 {
     int result = EINVAL;
@@ -344,6 +465,28 @@ int TJWT_ExpectAudience( TJWT *jwt, char *aud )
     return result;
 }
 
+/*============================================================================*/
+/*  TJWT_ExpectIssuer                                                         */
+/*!
+    Set the expected issuer
+
+    The TJWT_ExpectIssuer function sets the expected issuer associated with
+    the TJWT object.  If a JWT is received with a different (or non-existent)
+    issuer, then the key validation will fail.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to update
+
+    @param[in]
+        iss
+            pointer to the issuer value to expect
+
+    @retval EOK issuer updated
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
 int TJWT_ExpectIssuer( TJWT *jwt, char *iss )
 {
     int result = EINVAL;
@@ -358,6 +501,40 @@ int TJWT_ExpectIssuer( TJWT *jwt, char *iss )
     return result;
 }
 
+/*============================================================================*/
+/*  TJWT_Validate                                                             */
+/*!
+    Validate a JWT
+
+    The TJWT_Validate function validates the specified JWT, it checks the
+    following:
+
+    - token signature
+    - issuer
+    - audience
+    - key id
+    - token time range
+
+    If the token fails validation, authentication should fail and the
+    associated request denied.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to update
+
+    @param[in]
+        time
+            current system time (POSIX seconds)
+
+    @param[in]
+        token
+            JSON Web Token to be validated
+
+    @retval EOK token is validated - access allowed
+    @retval EACCES validation failed - access should be denied
+    @retval EINVAL invalid arguments - access should be denied
+
+==============================================================================*/
 int TJWT_Validate( TJWT *jwt, int64_t time, char *token )
 {
     int result = EINVAL;
@@ -407,6 +584,24 @@ int TJWT_Validate( TJWT *jwt, int64_t time, char *token )
     return result;
 }
 
+/*============================================================================*/
+/*  TJWT_GetClaims                                                            */
+/*!
+    Get the claims associated with the decoded JWT
+
+    The TJWT_GetClaims function gets a pointer to the JWTClaims object
+    associated with the specified JWT.  These claims should be considered
+    read-only and must not be mutated.  The pointers in the claims object
+    belong to the JWT lib and must not be cached for later use.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to get the claims from
+
+    @retval pointer to the JWT claims object
+    @retval NULL invalid JWT
+
+==============================================================================*/
 JWTClaims *TJWT_GetClaims( TJWT *jwt )
 {
     JWTClaims *claims = NULL;
@@ -419,12 +614,43 @@ JWTClaims *TJWT_GetClaims( TJWT *jwt )
     return claims;
 }
 
+/*============================================================================*/
+/*  TJWT_PrintClaims                                                          */
+/*!
+    Print the claims associated with the JWT
+
+    The TJWT_PrintClaims function pintts the claims associated with the
+    JWT out to the file specified by the file descriptor.
+
+    The following claims (if present) are printed:
+
+    - token issuer
+    - token subject
+    - token audience
+    - token identifier
+    - token issued at timestamp
+    - token non-before timestamp
+    - token expiry timestamp
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to get the claims from
+
+    @param[in]
+        fd
+            output file descriptor
+
+    @retval EOK claims printed ok
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
 int TJWT_PrintClaims( TJWT *jwt, int fd )
 {
     int result = EINVAL;
     int i;
 
-    if ( jwt != NULL )
+    if ( ( jwt != NULL ) &&
+         ( fd >= 0 ) )
     {
         if ( jwt->claims.iss != NULL )
         {
