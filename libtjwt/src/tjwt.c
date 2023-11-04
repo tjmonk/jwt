@@ -1119,7 +1119,7 @@ static size_t b64url_decode( const uint8_t *in,
 }
 
 /*============================================================================*/
-/*  parse_header                                                             */
+/*  parse_header                                                              */
 /*!
     parse the JWT header
 
@@ -1288,6 +1288,31 @@ static int parse_payload( TJWT *jwt )
     return result;
 }
 
+/*============================================================================*/
+/*  get_claim_int                                                             */
+/*!
+    Get an integer attribute from the processed JWT body
+
+    The get_claim_int function searches the processed JWT body JSON for an
+    integer value attribute with the specified name.
+
+    @param[in]
+        jwt
+            pointer to the JWT object containing JWT body info
+
+    @param[in]
+        name
+            pointer to the name of the attribute to retrieve
+
+    @param[in,out]
+        n
+            pointer to a location to store the retrieved integer value
+
+    @retval EOK the integer value was retrieved ok
+    @retval ENOENT the attribute was not found
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int get_claim_int( TJWT *jwt, char *name, int *n )
 {
     static int result;
@@ -1296,12 +1321,32 @@ static int get_claim_int( TJWT *jwt, char *name, int *n )
          ( name != NULL ) &&
          ( n != NULL ) )
     {
-        result = JSON_GetNum( jwt->pPayload, name, n );
+        result = ( JSON_GetNum( jwt->pPayload, name, n ) == 0 ) ? EOK : ENOENT;
     }
 
     return result;
 }
 
+/*============================================================================*/
+/*  get_claim_string                                                          */
+/*!
+    Get a string attribute from the processed JWT body
+
+    The get_claim_string function searches the processed JWT body JSON for a
+    string value attribute with the specified name.
+
+    @param[in]
+        jwt
+            pointer to the JWT object containing the JWT body info
+
+    @param[in]
+        name
+            pointer to the name of the attribute to retrieve
+
+    @retval pointer to the retrieved string
+    @retval NULL attribute could not be retrieved
+
+==============================================================================*/
 static char *get_claim_string( TJWT *jwt, char *name )
 {
     char *result = NULL;
@@ -1315,6 +1360,24 @@ static char *get_claim_string( TJWT *jwt, char *name )
     return result;
 }
 
+/*============================================================================*/
+/*  process_iss                                                               */
+/*!
+    Get the value of the 'iss' attribute from the JWT payload
+
+    The process_iss function gets a copy of the 'iss' attribute from the
+    body of the claim and stores it in the JWT's claim set.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object containing the claims info to update
+
+    @retval EOK the attribute string was successfully retrieved
+    @retval ENOENT the attribute was not found
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int process_iss( TJWT *jwt )
 {
     int result = EINVAL;
@@ -1337,6 +1400,24 @@ static int process_iss( TJWT *jwt )
     return result;
 }
 
+/*============================================================================*/
+/*  process_sub                                                               */
+/*!
+    Get the value of the 'sub' attribute from the JWT payload
+
+    The process_sub function gets a copy of the 'sub' attribute from the
+    body of the claim and stores it in the JWT's claim set.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object containing the claims info to update
+
+    @retval EOK the attribute string was successfully retrieved
+    @retval ENOENT the attribute was not found
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int process_sub( TJWT *jwt )
 {
     int result = EINVAL;
@@ -1359,6 +1440,24 @@ static int process_sub( TJWT *jwt )
     return result;
 }
 
+/*============================================================================*/
+/*  process_jti                                                               */
+/*!
+    Get the value of the 'jti' attribute from the JWT payload
+
+    The process_jti function gets a copy of the 'jti' attribute from the
+    body of the claim and stores it in the JWT's claim set.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object containing the claims info to update
+
+    @retval EOK the attribute string was successfully retrieved
+    @retval ENOENT the attribute was not found
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int process_jti( TJWT *jwt )
 {
     int result = EINVAL;
@@ -1381,6 +1480,24 @@ static int process_jti( TJWT *jwt )
     return result;
 }
 
+/*============================================================================*/
+/*  process_nbf                                                               */
+/*!
+    Get the value of the 'nbf' attribute from the JWT body JSON
+
+    The process_nbf function gets the value of the integer 'nbf' attribute
+    from the JWT body JSON and store it in the JWT's claim set object.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object containing the claims info to be
+            populated with the nbf value
+
+    @retval EOK the integer attribute was successfully retrieved
+    @retval ENOENT the integer attribute was not found
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int process_nbf( TJWT *jwt )
 {
     int result = EINVAL;
@@ -1398,6 +1515,24 @@ static int process_nbf( TJWT *jwt )
     return result;
 }
 
+/*============================================================================*/
+/*  process_exp                                                               */
+/*!
+    Get the value of the 'exp' attribute from the JWT body JSON
+
+    The process_exp function gets the value of the integer 'exp' attribute
+    from the JWT body JSON and store it in the JWT's claim set object.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object containing the claims info to be
+            populated with the exp value
+
+    @retval EOK the integer attribute was successfully retrieved
+    @retval ENOENT the integer attribute was not found
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int process_exp( TJWT *jwt )
 {
     int result = EINVAL;
@@ -1415,6 +1550,24 @@ static int process_exp( TJWT *jwt )
     return result;
 }
 
+/*============================================================================*/
+/*  process_iat                                                               */
+/*!
+    Get the value of the 'iat' attribute from the JWT body JSON
+
+    The process_iat function gets the value of the integer 'iat' attribute
+    from the JWT body JSON and store it in the JWT's claim set object.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object containing the claims info to be
+            populated with the iat value
+
+    @retval EOK the integer attribute was successfully retrieved
+    @retval ENOENT the integer attribute was not found
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int process_iat( TJWT *jwt )
 {
     int result = EINVAL;
@@ -1432,6 +1585,26 @@ static int process_iat( TJWT *jwt )
     return result;
 }
 
+/*============================================================================*/
+/*  process_aud                                                               */
+/*!
+    Get the value of the 'aud' attribute from the JWT body JSON
+
+    The process_aud function gets the value of the string or array 'aud'
+    attribute from the JWT body JSON and stores the aud values in the JWT's
+    claim set object.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object containing the claims info to be
+            populated with the aud value(s)
+
+    @retval EOK the aud string attribute was successfully retrieved
+    @retval ENOENT the attribute was not found
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int process_aud( TJWT *jwt )
 {
     int result = EINVAL;
@@ -1477,6 +1650,29 @@ static int process_aud( TJWT *jwt )
     return result;
 }
 
+/*============================================================================*/
+/*  process_aud_var                                                           */
+/*!
+    Get the value of the 'aud' attribute from the JWT body JSON
+
+    The process_aud_var function gets the value of the string 'aud'
+    attribute from the JWT body JSON and stores the aud value in the JWT's
+    claim set object.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object containing the claims info to be
+            populated with the aud value(s)
+
+    @param[in]
+        pVar
+            pointer to the JVar object containing the aud value
+
+    @retval EOK the aud string attribute was successfully retrieved
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int process_aud_var( TJWT *jwt, JVar *pVar )
 {
     int result = EINVAL;
@@ -1506,6 +1702,30 @@ static int process_aud_var( TJWT *jwt, JVar *pVar )
     return result;
 }
 
+/*============================================================================*/
+/*  process_aud_array                                                         */
+/*!
+    Get the value of the 'aud' attribute from the JWT body JSON
+
+    The process_aud_array function gets the values of the string 'aud'
+    attributes from the JWT body JSON and stores the aud values in the JWT's
+    claim set object.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object containing the claims info to be
+            populated with the aud value(s)
+
+    @param[in]
+        pArray
+            pointer to the JArray array containing the aud values
+
+    @retval EOK the aud string attributes were successfully retrieved
+    @retval ENOENT no values in the aud array
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int process_aud_array( TJWT *jwt, JArray *pArray )
 {
     int result = EINVAL;
@@ -1560,6 +1780,32 @@ static int process_aud_array( TJWT *jwt, JArray *pArray )
     return result;
 }
 
+/*============================================================================*/
+/*  add_aud_claim                                                             */
+/*!
+    Add an aud claim value to the claims set
+
+    The aud_add_claim function adds an aud value to the list of
+    aud values int he claims set.
+
+    @param[in,out]
+        claims
+            pointer to the JWT claims object to be updated
+
+    @param[in]
+        aud
+            pointe to an aud claim value
+
+    @param[in]
+        max_aud
+            maximum size of the aud array
+
+    @retval EOK the aud string was successfully added
+    @retval E2BIG no more room in the aud string array
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud )
 {
     int result = EINVAL;
@@ -1602,6 +1848,21 @@ static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud )
     return result;
 }
 
+/*============================================================================*/
+/*  TJWT_Free                                                                 */
+/*!
+    Deallocate the TJWT object
+
+    The TJWT_Free function deallocates the specified TJWT object
+
+    @param[in]
+        jwt
+            pointer to the JWT object to be released
+
+    @retval EOK the TJWT object was released
+    @retval EINVAL invalid argument
+
+==============================================================================*/
 int TJWT_Free( TJWT *jwt )
 {
     int result = EINVAL;
