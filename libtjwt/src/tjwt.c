@@ -194,6 +194,9 @@ typedef struct _jwt_obj
     /*! time */
     int64_t timestamp;
 
+    /*! error code */
+    uint32_t error;
+
 } TJWT;
 
 /*! algorithm map */
@@ -217,7 +220,6 @@ typedef struct _alg_map
 ==============================================================================*/
 
 static int split( const char *in, TJWT *jwt );
-static int PrintSections( TJWT *jwt );
 static int decode_jwt( TJWT *jwt );
 static int verify_rsa( TJWT *jwt );
 static int load_key( TJWT *jwt );
@@ -238,7 +240,7 @@ static int process_aud( TJWT *jwt );
 static int process_aud_var( TJWT *jwt, JVar *pVar );
 static int process_aud_array( TJWT *jwt, JArray *pArray );
 
-static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud );
+static int add_aud_claim( TJWT *jwt, JWTClaims *claims, char *aud, int max_aud);
 
 static char *get_claim_string( TJWT *jwt, char *name );
 static int get_claim_int( TJWT *jwt, char *name, int *n );
@@ -266,6 +268,42 @@ static const AlgMap algorithms[] = {
     { "RS512", EVP_sha512, RSA_PKCS1_PADDING, verify_rsa },
     { "RS384", EVP_sha384, RSA_PKCS1_PADDING, verify_rsa },
     { "RS256", EVP_sha256, RSA_PKCS1_PADDING, verify_rsa }
+};
+
+/*! array of TJWT Error descriptions */
+static const char *TJWT_Errors[] =
+{
+    /* 0  */ "invalid TJWT object",
+    /* 1  */ "memory allocation failure",
+    /* 2  */ "no token specified",
+    /* 3  */ "invalid issuer",
+    /* 4  */ "invalid subject",
+    /* 5  */ "invalid audience",
+    /* 6  */ "token expired",
+    /* 7  */ "clock time is before issued time",
+    /* 8  */ "clock time is before not-before time",
+    /* 9  */ "audience array empty",
+    /* 10 */ "audience data type invalid",
+    /* 11 */ "too many audiences specified",
+    /* 12 */ "failed to add audience",
+    /* 13 */ "key file not found",
+    /* 14 */ "invalid key file type",
+    /* 15 */ "failed to read key file",
+    /* 16 */ "key length unexpected",
+    /* 17 */ "failed to open key file",
+    /* 18 */ "no key filename specified",
+    /* 19 */ "payload decode error",
+    /* 20 */ "signature decode error",
+    /* 21 */ "failed to fully qualify key name",
+    /* 22 */ "invalid number of JWT sections",
+    /* 23 */ "JWT section length exceeded",
+    /* 24 */ "claim validation failed",
+    /* 25 */ "invalid key type",
+    /* 26 */ "signature verification failed",
+    /* 27 */ "invalid JWT type",
+    /* 28 */ "unsupported validation algorithm",
+    /* 29 */ "JWT header parse error",
+    /* 30 */ "JWT payload parse error"
 };
 
 /*==============================================================================
@@ -327,11 +365,44 @@ int TJWT_SetKeyStore( TJWT *jwt, char *dirname )
         }
         else
         {
+            jwt->error |= (1L << TJWT_ERR_MEMORY_ALLOC );
             result = ENOMEM;
         }
     }
 
     return result;
+}
+
+/*============================================================================*/
+/*  TJWT_GetErrors                                                            */
+/*!
+    Get the error bitnap from the TJWT decoder
+
+    The TJWT_GetErrors retrieves the error bitmap from the JWT decoding
+    operation.  One or more error bits may be set.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to query
+
+    @retval 0 = no error
+    @retval error bitfield
+
+==============================================================================*/
+uint32_t TJWT_GetErrors( TJWT *jwt )
+{
+    uint32_t error = 0;
+
+    if ( jwt != NULL )
+    {
+        return jwt->error;
+    }
+    else
+    {
+        return 1L << TJWT_ERR_INVALID_OBJECT;
+    }
+
+    return error;
 }
 
 /*============================================================================*/
@@ -364,7 +435,15 @@ int TJWT_ExpectKid( TJWT *jwt, char *kid )
          ( kid != NULL ) )
     {
         jwt->kid = strdup( kid );
-        result = ( jwt->kid != NULL ) ? EOK : ENOMEM;
+        if ( jwt->kid != NULL )
+        {
+            result = EOK;
+        }
+        else
+        {
+            result = ENOMEM;
+            jwt->error |= (1L << TJWT_ERR_MEMORY_ALLOC );
+        }
     }
 
     return result;
@@ -399,7 +478,15 @@ int TJWT_SetKey( TJWT *jwt, char *key )
          ( key != NULL ) )
     {
         jwt->key = strdup( key );
-        result = ( jwt->key != NULL ) ? EOK : ENOMEM;
+        if ( jwt->key != NULL )
+        {
+            result = EOK;
+        }
+        else
+        {
+            result = ENOMEM;
+            jwt->error |= (1L << TJWT_ERR_MEMORY_ALLOC );
+        }
     }
 
     return result;
@@ -435,7 +522,15 @@ int TJWT_SetKeyFile( TJWT *jwt, char *filename )
          ( filename != NULL ) )
     {
         jwt->keyfile = strdup( filename );
-        result = ( jwt->keyfile != NULL ) ? EOK : ENOMEM;
+        if ( jwt->keyfile != NULL )
+        {
+            result = EOK;
+        }
+        else
+        {
+            result = ENOMEM;
+            jwt->error |= (1L << TJWT_ERR_MEMORY_ALLOC );
+        }
     }
 
     return result;
@@ -504,28 +599,36 @@ int TJWT_ExpectAudience( TJWT *jwt, char *aud )
          ( aud != NULL ) )
     {
         jwt->aud = strdup( aud );
-        result = ( jwt->aud != NULL ) ? EOK : ENOMEM;
+        if ( jwt->aud != NULL )
+        {
+            result = EOK;
+        }
+        else
+        {
+            result = ENOMEM;
+            jwt->error |= (1L << TJWT_ERR_MEMORY_ALLOC );
+        }
     }
 
     return result;
 }
 
 /*============================================================================*/
-/*  TJWT_ExpectAudience                                                       */
+/*  TJWT_ExpectSubject                                                        */
 /*!
-    Set the expected key audience
+    Set the expected subject
 
-    The TJWT_ExpectAudience function sets the expected audience associated with
+    The TJWT_ExpectSubject function sets the expected subject associated with
     the TJWT object.  If a JWT is received with a different (or non-existent)
-    audience, then the key validation will fail.
+    subject, then the key validation will fail.
 
     @param[in]
         jwt
             pointer to the TJWT object to update
 
     @param[in]
-        aud
-            pointer to the audience value to expect
+        sub
+            pointer to the subject value to expect
 
     @retval EOK audience updated
     @retval ENOMEM memory allocation failed
@@ -540,7 +643,15 @@ int TJWT_ExpectSubject( TJWT *jwt, char *sub )
          ( sub != NULL ) )
     {
         jwt->sub = strdup( sub );
-        result = ( jwt->sub != NULL ) ? EOK : ENOMEM;
+        if ( jwt->sub != NULL )
+        {
+            result = EOK;
+        }
+        else
+        {
+            result = ENOMEM;
+            jwt->error |= (1L << TJWT_ERR_MEMORY_ALLOC );
+        }
     }
 
     return result;
@@ -576,7 +687,15 @@ int TJWT_ExpectIssuer( TJWT *jwt, char *iss )
          ( iss != NULL ) )
     {
         jwt->iss = strdup( iss );
-        result = ( jwt->iss != NULL ) ? EOK : ENOMEM;
+        if ( jwt->iss != NULL )
+        {
+            result = EOK;
+        }
+        else
+        {
+            jwt->error |= (1L << TJWT_ERR_MEMORY_ALLOC );
+            result = ENOMEM;
+        }
     }
 
     return result;
@@ -621,25 +740,30 @@ int TJWT_Validate( TJWT *jwt, int64_t timestamp, char *token )
     int result = EINVAL;
     bool rc;
 
-    if ( ( jwt != NULL ) &&
-         ( token != NULL ) )
+    if ( jwt != NULL )
     {
-        /* set the timestamp */
-        jwt->timestamp = timestamp;
-
-        rc = split( token, jwt ) ||
-             PrintSections( jwt ) ||
-             parse_header( jwt ) ||
-             load_key( jwt ) ||
-             decode_jwt( jwt ) ||
-             ( jwt->verify == NULL ) ||
-             jwt->verify( jwt ) ||
-             parse_payload( jwt ) ||
-             check_claims( jwt );
-
-        if ( rc == false )
+        if ( token != NULL )
         {
-            result = EOK;
+            /* set the timestamp */
+            jwt->timestamp = timestamp;
+
+            rc = split( token, jwt ) ||
+                parse_header( jwt ) ||
+                load_key( jwt ) ||
+                decode_jwt( jwt ) ||
+                ( jwt->verify == NULL ) ||
+                jwt->verify( jwt ) ||
+                parse_payload( jwt ) ||
+                check_claims( jwt );
+
+            if ( rc == false )
+            {
+                result = EOK;
+            }
+        }
+        else
+        {
+            jwt->error |= (1L << TJWT_ERR_NO_TOKEN );
         }
     }
 
@@ -683,7 +807,15 @@ static int check_claims( TJWT *jwt )
              check_aud( jwt ) ||
              check_time( jwt );
 
-        result = ( rc == 0 ) ? EOK : EACCES;
+        if ( rc == 0 )
+        {
+            result = EOK;
+        }
+        else
+        {
+            result = EACCES;
+            jwt->error |= ( 1L << TJWT_ERR_CLAIM_VALIDATION );
+        }
     }
 
     return result;
@@ -728,12 +860,15 @@ static int check_iss( TJWT *jwt )
                 }
                 else
                 {
+                    /* issuer does not match expectation */
+                    jwt->error |= ( 1L << TJWT_ERR_INVALID_ISS );
                     result = EACCES;
                 }
             }
             else
             {
                 /* we are expecting an issuer but none was specified */
+                jwt->error |= ( 1L << TJWT_ERR_INVALID_ISS );
                 result = EACCES;
             }
         }
@@ -786,12 +921,15 @@ static int check_sub( TJWT *jwt )
                 }
                 else
                 {
+                    /* subject does not match expectation */
+                    jwt->error |= ( 1L << TJWT_ERR_INVALID_SUB );
                     result = EACCES;
                 }
             }
             else
             {
                 /* we are expecting a subject but none was specified */
+                jwt->error |= ( 1L << TJWT_ERR_INVALID_SUB );
                 result = EACCES;
             }
         }
@@ -856,10 +994,17 @@ static int check_aud( TJWT *jwt )
                         }
                     }
                 }
+
+                if ( result != EOK )
+                {
+                    /* audience does not match expectation */
+                    jwt->error |= ( 1L << TJWT_ERR_INVALID_AUD );
+                }
             }
             else
             {
                 /* we are expecting an audience but none was specified */
+                jwt->error |= ( 1L << TJWT_ERR_INVALID_AUD );
                 result = EACCES;
             }
         }
@@ -906,11 +1051,12 @@ static int check_time( TJWT *jwt )
 
         timestamp = jwt->timestamp;
 
-        printf("timestamp = %" PRId64 "\n", timestamp );
         if ( jwt->claims.exp != 0 )
         {
             if ( timestamp > jwt->claims.exp + jwt->clockskew )
             {
+                /* token has expired */
+                jwt->error |= ( 1L << TJWT_ERR_TOKEN_EXPIRED );
                 result = EACCES;
             }
         }
@@ -919,6 +1065,8 @@ static int check_time( TJWT *jwt )
         {
             if ( timestamp < jwt->claims.iat - jwt->clockskew )
             {
+                /* timestamp is before token issued at time */
+                jwt->error |= ( 1L << TJWT_ERR_TIME_BEFORE_IAT );
                 result = EACCES;
             }
         }
@@ -927,6 +1075,8 @@ static int check_time( TJWT *jwt )
         {
             if ( timestamp < jwt->claims.nbf - jwt->clockskew )
             {
+                /* timestamp is before token not-before time */
+                jwt->error |= ( 1L << TJWT_ERR_TIME_BEFORE_NBF );
                 result = EACCES;
             }
         }
@@ -1091,6 +1241,7 @@ static int split( const char *in, TJWT *jwt )
                 if ( section >= JWT_MAX_NUM_SECTIONS )
                 {
                     /* number of sections is not supported */
+                    jwt->error |= ( 1L << TJWT_ERR_NUM_SECTIONS );
                     result = E2BIG;
                     break;
                 }
@@ -1105,6 +1256,7 @@ static int split( const char *in, TJWT *jwt )
                 if ( j >= JWT_MAX_SECTION_LEN )
                 {
                     /* section is too big */
+                    jwt->error |= ( 1L << TJWT_ERR_SECTION_LEN );
                     result = EFBIG;
                     break;
                 }
@@ -1125,6 +1277,7 @@ static int split( const char *in, TJWT *jwt )
         /* check that we have all the sections we expect */
         if ( section < JWT_MAX_NUM_SECTIONS - 1 )
         {
+            jwt->error |= ( 1L << TJWT_ERR_NUM_SECTIONS );
             result = EBADMSG;
         }
     }
@@ -1133,7 +1286,7 @@ static int split( const char *in, TJWT *jwt )
 }
 
 /*============================================================================*/
-/*  PrintSections                                                             */
+/*  TJWT_PrintSections                                                        */
 /*!
     Print the sections of an encoded JWT object
 
@@ -1148,15 +1301,16 @@ static int split( const char *in, TJWT *jwt )
     @retval EINVAL invalid argument
 
 ==============================================================================*/
-static int PrintSections( TJWT *jwt )
+int TJWT_PrintSections( TJWT *jwt, int fd )
 {
     int result = EINVAL;
 
-    if ( jwt != NULL )
+    if ( ( jwt != NULL ) &&
+         ( fd != -1 ) )
     {
-        printf( "header: %s\n", jwt->sections[JWT_HEADER_SECTION] );
-        printf( "payload: %s\n", jwt->sections[JWT_PAYLOAD_SECTION] );
-        printf( "signature: %s\n", jwt->sections[JWT_SIGNATURE_SECTION] );
+        dprintf( fd, "header: %s\n", jwt->sections[JWT_HEADER_SECTION] );
+        dprintf( fd, "payload: %s\n", jwt->sections[JWT_PAYLOAD_SECTION] );
+        dprintf( fd, "signature: %s\n", jwt->sections[JWT_SIGNATURE_SECTION] );
 
         result = EOK;
     }
@@ -1199,6 +1353,7 @@ static int decode_jwt( TJWT *jwt )
         jwt->payloadlen = len;
         if ( len == 0 )
         {
+            jwt->error |= ( 1L << TJWT_ERR_PAYLOAD_DECODE );
             result = EINVAL;
         }
 
@@ -1209,6 +1364,7 @@ static int decode_jwt( TJWT *jwt )
         jwt->siglen = len;
         if ( len == 0 )
         {
+            jwt->error |= ( 1L << TJWT_ERR_SIGNATURE_DECODE );
             result = EINVAL;
         }
     }
@@ -1244,69 +1400,84 @@ static char *get_key_name( TJWT *jwt )
     char *filename = NULL;
     int n = 0;
 
-    if ( ( jwt != NULL ) &&
-         ( ( jwt->kid != NULL ) || ( jwt->keyfile != NULL ) ) )
+    if ( jwt != NULL )
     {
-        if ( jwt->keyfile != NULL )
+        if ( ( jwt->kid != NULL ) || ( jwt->keyfile != NULL ) )
         {
-            /* set the default key file name */
-            filename = jwt->keyfile;
-        }
+            if ( jwt->keyfile != NULL )
+            {
+                /* set the default key file name */
+                filename = jwt->keyfile;
+            }
 
-        if ( jwt->kid != NULL )
-        {
-            /* override the key file name with the kid */
-            filename = jwt->kid;
-        }
+            if ( jwt->kid != NULL )
+            {
+                /* override the key file name with the kid */
+                filename = jwt->kid;
+            }
 
-        if ( jwt->keystore != NULL )
-        {
-            n = strlen( jwt->keystore );
-        }
-
-        if ( filename != NULL )
-        {
-            n += strlen( filename );
-        }
-
-        /* allow a / and and NUL terminator */
-        n += 2;
-
-        keyfile = calloc( 1, n );
-        if ( keyfile != NULL )
-        {
             if ( jwt->keystore != NULL )
             {
-                /* get the length of the key store string so we can
-                check the last character value */
-                len = strlen( jwt->keystore );
-                if ( jwt->keystore[len-1] == '/' )
+                n = strlen( jwt->keystore );
+            }
+
+            if ( filename != NULL )
+            {
+                n += strlen( filename );
+            }
+
+            /* allow a / and and NUL terminator */
+            n += 2;
+
+            keyfile = calloc( 1, n );
+            if ( keyfile != NULL )
+            {
+                if ( jwt->keystore != NULL )
                 {
-                    /* construct the fully qualified key file name */
-                    n = sprintf( keyfile,
-                                 "%s%s",
-                                 jwt->keystore,
-                                 filename );
+                    /* get the length of the key store string so we can
+                    check the last character value */
+                    len = strlen( jwt->keystore );
+                    if ( jwt->keystore[len-1] == '/' )
+                    {
+                        /* construct the fully qualified key file name */
+                        n = sprintf( keyfile,
+                                    "%s%s",
+                                    jwt->keystore,
+                                    filename );
+                    }
+                    else
+                    {
+                        /* construct the fully qualified key file name */
+                        n = sprintf( keyfile,
+                                    "%s/%s",
+                                    jwt->keystore,
+                                    filename );
+                    }
+
+                    if ( n <= 0 )
+                    {
+                        jwt->error |= ( 1L << TJWT_ERR_KEY_FQN );
+                        free( keyfile );
+                        keyfile = NULL;
+                    }
                 }
                 else
                 {
-                    /* construct the fully qualified key file name */
-                    n = sprintf( keyfile,
-                                 "%s/%s",
-                                 jwt->keystore,
-                                 filename );
-                }
-
-                if ( ( n <= 0 ) && ( keyfile != NULL ) )
-                {
-                    free( keyfile );
-                    keyfile = NULL;
+                    keyfile = strdup( filename );
+                    if ( keyfile != NULL )
+                    {
+                        jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
+                    }
                 }
             }
             else
             {
-                keyfile = strdup( filename );
+                jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
             }
+        }
+        else
+        {
+            jwt->error |= ( 1L << TJWT_ERR_KEY_FILENAME );
         }
     }
 
@@ -1353,6 +1524,7 @@ static int load_key( TJWT *jwt )
                 if ( rc != 0 )
                 {
                     /* get error from stat function */
+                    jwt->error |= ( 1L << TJWT_ERR_KEY_FILE_NOT_FOUND );
                     result = errno;
                 }
                 else
@@ -1371,12 +1543,14 @@ static int load_key( TJWT *jwt )
                         else
                         {
                             /* memory allocation failure */
+                            jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
                             result = ENOMEM;
                         }
                     }
                     else
                     {
                         /* unsupported file type */
+                        jwt->error |= ( 1L << TJWT_ERR_KEY_FILE_STAT_TYPE );
                         result = ENOTSUP;
                     }
                 }
@@ -1436,6 +1610,7 @@ static int read_key( TJWT *jwt )
             if ( n == -1 )
             {
                 /* get error from read function */
+                jwt->error |= ( 1L << TJWT_ERR_KEY_READ );
                 result = errno;
             }
             else if ( (size_t)n == jwt->keylen )
@@ -1448,6 +1623,7 @@ static int read_key( TJWT *jwt )
             else
             {
                 /* unexpected read length */
+                jwt->error |= ( 1L << TJWT_ERR_KEY_LENGTH_UNEXPECTED );
                 result = EIO;
             }
 
@@ -1457,6 +1633,7 @@ static int read_key( TJWT *jwt )
         else
         {
             /* get error from open function */
+            jwt->error |= ( 1L << TJWT_ERR_KEY_OPEN );
             result = errno;
         }
     }
@@ -1508,7 +1685,7 @@ static int verify_rsa( TJWT *jwt )
 
         if ( EVP_PKEY_id( pkey ) != EVP_PKEY_RSA )
         {
-            printf("invalid key type\n");
+            jwt->error |= ( 1L << TJWT_ERR_KEY_TYPE );
             return EINVAL;
         }
 
@@ -1545,6 +1722,11 @@ static int verify_rsa( TJWT *jwt )
         BIO_free(keybio);
         EVP_PKEY_free(pkey);
         EVP_MD_CTX_free(md_ctx);
+
+        if ( result != EOK )
+        {
+            jwt->error |= ( 1L << TJWT_ERR_SIGNATURE_VERIFY );
+        }
     }
 
     return result;
@@ -1719,10 +1901,15 @@ static int parse_header( TJWT *jwt )
                             alg = JSON_GetStr( pHeader, "alg" );
                             result = select_algorithm( alg, jwt );
                         }
+                        else
+                        {
+                            jwt->error |= ( 1L << TJWT_ERR_TYPE );
+                        }
                     }
                     else
                     {
                         /* no 'typ' attribute found */
+                        jwt->error |= ( 1L << TJWT_ERR_TYPE );
                         result = ENOTSUP;
                     }
                 }
@@ -1733,6 +1920,7 @@ static int parse_header( TJWT *jwt )
             else
             {
                 /* cannot parse JSON header */
+                jwt->error |= ( 1L << TJWT_ERR_PARSE_HEADER );
                 result = ENOTSUP;
             }
         }
@@ -1853,6 +2041,12 @@ static int select_algorithm( char *alg, TJWT *jwt )
                 break;
             }
         }
+
+        if ( result != EOK )
+        {
+            /* unsupported verification algorithm */
+            jwt->error |= ( 1L << TJWT_ERR_ALG );
+        }
     }
 
     return result;
@@ -1896,6 +2090,10 @@ static int parse_payload( TJWT *jwt )
             jwt->pPayload = NULL;
 
             result = EOK;
+        }
+        else
+        {
+            jwt->error |= ( 1L << TJWT_ERR_PARSE_PAYLOAD );
         }
     }
 
@@ -2003,7 +2201,15 @@ static int process_iss( TJWT *jwt )
         if ( iss != NULL )
         {
             jwt->claims.iss = strdup( iss );
-            result = ( jwt->claims.iss != NULL ) ? EOK : ENOMEM;
+            if ( jwt->claims.iss != NULL )
+            {
+                result = EOK;
+            }
+            else
+            {
+                result = ENOMEM;
+                jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
+            }
         }
         else
         {
@@ -2043,7 +2249,15 @@ static int process_sub( TJWT *jwt )
         if ( sub != NULL )
         {
             jwt->claims.sub = strdup( sub );
-            result = ( jwt->claims.sub != NULL ) ? EOK : ENOMEM;
+            if ( jwt->claims.sub != NULL )
+            {
+                result = EOK;
+            }
+            else
+            {
+                result = ENOMEM;
+                jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
+            }
         }
         else
         {
@@ -2083,7 +2297,15 @@ static int process_jti( TJWT *jwt )
         if ( jti != NULL )
         {
             jwt->claims.jti = strdup( jti );
-            result = ( jwt->claims.jti != NULL ) ? EOK : ENOMEM;
+            if ( jwt->claims.jti != NULL )
+            {
+                result = EOK;
+            }
+            else
+            {
+                jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
+                result = ENOMEM;
+            }
         }
         else
         {
@@ -2249,16 +2471,17 @@ static int process_aud( TJWT *jwt )
                     break;
 
                 default:
+                    /* invalid aud data type */
+                    jwt->error |= ( 1L << TJWT_ERR_AUD_DATA_TYPE );
+                    result = ENOTSUP;
                     break;
             }
         }
         else
         {
             /* no 'aud' values found */
-            result = ENOENT;
+            result = EOK;
         }
-
-        result = EOK;
     }
 
     return result;
@@ -2301,13 +2524,19 @@ static int process_aud_var( TJWT *jwt, JVar *pVar )
             jwt->claims.aud = malloc( sizeof( char * ) );
             if ( jwt->claims.aud != NULL )
             {
-                result = add_aud_claim( &jwt->claims,
+                result = add_aud_claim( jwt,
+                                        &jwt->claims,
                                         pVar->var.val.str,
                                         1 );
+                if ( result != EOK )
+                {
+                    jwt->error |= ( 1L << TJWT_ERR_AUD_ADD );
+                }
             }
             else
             {
                 /* memory allocation failure */
+                jwt->error |= (1L << TJWT_ERR_MEMORY_ALLOC );
                 result = ENOMEM;
             }
         }
@@ -2370,9 +2599,14 @@ static int process_aud_array( TJWT *jwt, JArray *pArray )
                             pVar = (JVar *)pNode;
                             if ( pVar->var.type == JVARTYPE_STR )
                             {
-                                result = add_aud_claim( &jwt->claims,
+                                result = add_aud_claim( jwt,
+                                                        &jwt->claims,
                                                         pVar->var.val.str,
                                                         n );
+                                if ( result != EOK )
+                                {
+                                    jwt->error |= ( 1L << TJWT_ERR_AUD_ADD );
+                                }
                             }
                         }
                     }
@@ -2380,12 +2614,14 @@ static int process_aud_array( TJWT *jwt, JArray *pArray )
             }
             else
             {
+                jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
                 result = ENOMEM;
             }
         }
         else
         {
             /* empty array */
+            jwt->error |= ( 1L << TJWT_ERR_AUD_ARRAY_EMPTY );
             result = ENOENT;
         }
 
@@ -2399,7 +2635,7 @@ static int process_aud_array( TJWT *jwt, JArray *pArray )
 /*!
     Add an aud claim value to the claims set
 
-    The aud_add_claim function adds an aud value to the list of
+    The add_aud_claim function adds an aud value to the list of
     aud values int he claims set.
 
     @param[in,out]
@@ -2420,13 +2656,14 @@ static int process_aud_array( TJWT *jwt, JArray *pArray )
     @retval EINVAL invalid argument
 
 ==============================================================================*/
-static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud )
+static int add_aud_claim( TJWT *jwt, JWTClaims *claims, char *aud, int max_aud )
 {
     int result = EINVAL;
     int n;
     char *p;
 
-    if ( ( claims != NULL ) &&
+    if ( ( jwt != NULL ) &&
+         ( claims != NULL ) &&
          ( aud != NULL ) )
     {
         /* assume everything is ok until it isn't */
@@ -2450,11 +2687,14 @@ static int add_aud_claim( JWTClaims *claims, char *aud, int max_aud )
             }
             else
             {
+                /* cannot allocate memory */
+                jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
                 result = ENOMEM;
             }
         }
         else
         {
+            jwt->error |= ( 1L << TJWT_ERR_AUD_TOO_MANY );
             result = E2BIG;
         }
     }
@@ -2554,6 +2794,12 @@ int TJWT_Free( TJWT *jwt )
             jwt->sub = NULL;
         }
 
+        if ( jwt->pPayload != NULL )
+        {
+            JSON_Free( jwt->pPayload );
+            jwt->pPayload = NULL;
+        }
+
         /* clear the JWT object ready for re-use */
         memset( jwt, 0, sizeof( TJWT ) );
 
@@ -2561,6 +2807,109 @@ int TJWT_Free( TJWT *jwt )
         free( jwt );
 
         result = EOK;
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  TJWT_ErrorString                                                          */
+/*!
+    Get the error string associated with the error index
+
+    The TJWT_ErrorString function gets the error string associated
+    with the error value;
+
+    @param[in]
+        err
+            JWT error value
+
+    @retval pointer to the error string associated with the error value
+    @retval pointer to "unknown" if an invalid error string is requested
+
+==============================================================================*/
+const char *TJWT_ErrorString( JWTErr err )
+{
+    const char *errstr = "unknown";
+
+    if ( ( err >= 0 ) && ( err < TJWT_ERR_MAX ) )
+    {
+        errstr = TJWT_Errors[err];
+    }
+
+    return errstr;
+}
+
+/*============================================================================*/
+/*  TJWT_OutputErrors                                                         */
+/*!
+    Output the JWT errors
+
+    The TJWT_OutputErrors function writes out all the detected JWT errors to the
+    specified file descriptor.
+
+    @param[in]
+        jwt
+            pointer to the JWT object containing the errors to output
+
+    @param[in]
+        fd
+            output file descriptor
+
+    @retval EOK the errors were output
+    @retval EINVAL invalid argument
+
+==============================================================================*/
+int TJWT_OutputErrors( TJWT *jwt, int fd )
+{
+    uint32_t error = (1L << TJWT_ERR_INVALID_OBJECT );
+    JWTErr err;
+    int result = EINVAL;
+
+    if ( jwt != NULL )
+    {
+        error = jwt->error;
+        result = EOK;
+    }
+
+    for ( err = 0; err < TJWT_ERR_MAX; err++ )
+    {
+        if ( error & ( 1L << err ) )
+        {
+            dprintf( fd, "%s\n", TJWT_ErrorString(err) );
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  TJWT_HasError                                                             */
+/*!
+    Check if a JWT error is asserted
+
+    The TJWT_HasError function checks if the specified JWT error is
+    asserted (i.e the error has occurred).
+
+    @param[in]
+        jwt
+            pointer to the JWT object containing the errors to check
+
+    @param[in]
+        err
+            the specific error to check for
+
+    @retval true - the error is present
+    @retval false - the error is not present
+
+==============================================================================*/
+bool TJWT_HasError( TJWT *jwt, JWTErr err )
+{
+    bool result = false;
+
+    if ( jwt != NULL )
+    {
+        result = ( jwt->error & ( 1L << err ) ) ? true : false;
     }
 
     return result;

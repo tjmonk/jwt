@@ -117,6 +117,7 @@ int main(int argc, char **argv)
     }
     else
     {
+        TJWT_OutputErrors( jwt, STDOUT_FILENO );
         printf("Validation failed - Access Denied\n");
     }
 
