@@ -94,7 +94,7 @@ SOFTWARE.
 int main(int argc, char **argv)
 {
     TJWT *jwt = NULL;
-    time_t now = time(NULL);
+    time_t now = 1698829980;
 
     if ( argc != 2 )
     {
@@ -104,9 +104,20 @@ int main(int argc, char **argv)
 
     jwt = TJWT_Init();
 
+    TJWT_SetKeyFile( jwt, "public.key" );
+    TJWT_ExpectIssuer( jwt, "sunpower.com" );
+    TJWT_ExpectSubject( jwt, "spwr_installer" );
+    TJWT_ExpectAudience( jwt, "dev1" );
+
     if ( TJWT_Validate( jwt, now, argv[1] ) == EOK )
     {
         TJWT_PrintClaims( jwt, STDOUT_FILENO );
+
+        printf("Validation successful!!! - Access Granted\n");
+    }
+    else
+    {
+        printf("Validation failed - Access Denied\n");
     }
 
     TJWT_Free( jwt );

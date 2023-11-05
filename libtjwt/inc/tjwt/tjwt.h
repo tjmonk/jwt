@@ -80,9 +80,11 @@ TJWT *TJWT_Init();
 int TJWT_ExpectKid( TJWT *jwt, char *kid );
 int TJWT_ExpectAudience( TJWT *jwt, char *aud );
 int TJWT_ExpectIssuer( TJWT *jwt, char *iss );
+int TJWT_ExpectSubject( TJWT *jwt, char *sub );
 
-int TJWT_SetPubkey( TJWT *jwt, char *pubkey );
-int TJWT_SetPubKeyStore( TJWT *jwt, char *store );
+int TJWT_Setkey( TJWT *jwt, char *key );
+int TJWT_SetKeyFile( TJWT *jwt, char *filename );
+int TJWT_SetKeyStore( TJWT *jwt, char *dirname );
 
 int TJWT_SetClockSkew( TJWT *jwt, int skew );
 int TJWT_Validate( TJWT *jwt, int64_t time, char *token );

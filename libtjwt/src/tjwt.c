@@ -48,6 +48,7 @@ SOFTWARE.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <inttypes.h>
 #include <openssl/bio.h>
 #include <openssl/ec.h>
@@ -98,11 +99,6 @@ SOFTWARE.
 /*! max JWT payload length */
 #ifndef JWT_MAX_PAYLOAD_LEN
 #define JWT_MAX_PAYLOAD_LEN ( 256 )
-#endif
-
-/*! max JWT validation key length */
-#ifndef JWT_MAX_KEY_LEN
-#define JWT_MAX_KEY_LEN ( 1024 )
 #endif
 
 /*! max JWT signature length */
@@ -160,7 +156,7 @@ typedef struct _jwt_obj
     size_t siglen;
 
     /*! pointer to the validating key */
-    char key[JWT_MAX_KEY_LEN];
+    char *key;
 
     /*! length of the validation key */
     size_t keylen;
@@ -174,8 +170,8 @@ typedef struct _jwt_obj
     /*! pointer to the JSON payload */
     JNode *pPayload;
 
-    /* pointer to the name of the public key store */
-    char *pubkeystore;
+    /* pointer to the name of the key store */
+    char *keystore;
 
     /*! pointer to the key ID string */
     char *kid;
@@ -186,14 +182,17 @@ typedef struct _jwt_obj
     /*! pointer to the expected issuer string */
     char *iss;
 
-    /*! pointer to the public key string */
-    char *pubkey;
+    /*! pointer to the expected subject string */
+    char *sub;
 
     /*! JWT claims */
     JWTClaims claims;
 
     /*! clock skew */
     int clockskew;
+
+    /*! time */
+    int64_t timestamp;
 
 } TJWT;
 
@@ -222,6 +221,9 @@ static int PrintSections( TJWT *jwt );
 static int decode_jwt( TJWT *jwt );
 static int verify_rsa( TJWT *jwt );
 static int load_key( TJWT *jwt );
+static int read_key( TJWT *jwt );
+
+static char *get_key_name( TJWT *jwt );
 
 static size_t b64url_decode( const uint8_t *in,
                              size_t len,
@@ -247,6 +249,13 @@ static int process_jti( TJWT *jwt );
 static int process_nbf( TJWT *jwt );
 static int process_exp( TJWT *jwt );
 static int process_iat( TJWT *jwt );
+static int process_kid( TJWT *jwt, char *kid );
+
+static int check_claims( TJWT *jwt );
+static int check_iss( TJWT *jwt );
+static int check_sub( TJWT *jwt );
+static int check_aud( TJWT *jwt );
+static int check_time( TJWT *jwt );
 
 /*==============================================================================
         Private file scoped variables
@@ -282,37 +291,37 @@ TJWT *TJWT_Init( void )
 }
 
 /*============================================================================*/
-/*  TJWT_SetPubKeyStore                                                       */
+/*  TJWT_SetKeyStore                                                          */
 /*!
-    Set the public key store reference
+    Set the key store reference
 
-    The TJWT_SetPubKeyStore function sets the public key store reference.
-    This is the location where public keys referenced via the JWT 'kid'
+    The TJWT_SetKeyStore function sets the key store reference.
+    This is the location where keys referenced via the JWT 'kid'
     attribute are stored.  This is the fully qualified path of a
-    directory containing the public key files.
+    directory containing the key files.
 
     @param[in]
         jwt
             pointer to the TJWT object to update
 
     @param[in]
-        store
-            pointer to the directory name of the public key store
+        dirname
+            pointer to the directory name of the key store
 
-    @retval EOK public key store name updated
+    @retval EOK key store name updated
     @retval ENOMEM memory allocation failed
     @retval EINVAL invalid arguments
 
 ==============================================================================*/
-int TJWT_SetPubKeyStore( TJWT *jwt, char *store )
+int TJWT_SetKeyStore( TJWT *jwt, char *dirname )
 {
     int result = EINVAL;
 
     if ( ( jwt != NULL ) &&
-         ( store != NULL ) )
+         ( dirname != NULL ) )
     {
-        jwt->pubkeystore = strdup( store );
-        if ( jwt->pubkeystore != NULL )
+        jwt->keystore = strdup( dirname );
+        if ( jwt->keystore != NULL )
         {
             result = EOK;
         }
@@ -362,11 +371,11 @@ int TJWT_ExpectKid( TJWT *jwt, char *kid )
 }
 
 /*============================================================================*/
-/*  TJWT_SetPubkey                                                            */
+/*  TJWT_SetKey                                                               */
 /*!
-    Set the public key to use to validate the JWT signature
+    Set the key to use to validate the JWT signature
 
-    The TJWT_SetPubkey function sets the public key to use to validate the
+    The TJWT_SetKey function sets the key to use to validate the
     JWT signature.
 
     @param[in]
@@ -374,23 +383,59 @@ int TJWT_ExpectKid( TJWT *jwt, char *kid )
             pointer to the TJWT object to update
 
     @param[in]
-        pubkey
-            pointer to the public key to use to validate the JWT signature
+        key
+            pointer to the key to use to validate the JWT signature
 
     @retval EOK public key updated
     @retval ENOMEM memory allocation failed
     @retval EINVAL invalid arguments
 
 ==============================================================================*/
-int TJWT_SetPubkey( TJWT *jwt, char *pubkey )
+int TJWT_SetKey( TJWT *jwt, char *key )
 {
     int result = EINVAL;
 
     if ( ( jwt != NULL ) &&
-         ( pubkey != NULL ) )
+         ( key != NULL ) )
     {
-        jwt->pubkey = strdup( pubkey );
-        result = ( jwt->kid != NULL ) ? EOK : ENOMEM;
+        jwt->key = strdup( key );
+        result = ( jwt->key != NULL ) ? EOK : ENOMEM;
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  TJWT_SetKeyFile                                                           */
+/*!
+    Set the name of the key file to use to validate the JWT signature
+
+    The TJWT_SetKeyFile function sets the name of the key file to use to
+    validate the JWT signature.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to update
+
+    @param[in]
+        filename
+            pointer to the name of the key file to use to validate
+            the JWT signature
+
+    @retval EOK key file name updated
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
+int TJWT_SetKeyFile( TJWT *jwt, char *filename )
+{
+    int result = EINVAL;
+
+    if ( ( jwt != NULL ) &&
+         ( filename != NULL ) )
+    {
+        jwt->keyfile = strdup( filename );
+        result = ( jwt->keyfile != NULL ) ? EOK : ENOMEM;
     }
 
     return result;
@@ -466,6 +511,42 @@ int TJWT_ExpectAudience( TJWT *jwt, char *aud )
 }
 
 /*============================================================================*/
+/*  TJWT_ExpectAudience                                                       */
+/*!
+    Set the expected key audience
+
+    The TJWT_ExpectAudience function sets the expected audience associated with
+    the TJWT object.  If a JWT is received with a different (or non-existent)
+    audience, then the key validation will fail.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to update
+
+    @param[in]
+        aud
+            pointer to the audience value to expect
+
+    @retval EOK audience updated
+    @retval ENOMEM memory allocation failed
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
+int TJWT_ExpectSubject( TJWT *jwt, char *sub )
+{
+    int result = EINVAL;
+
+    if ( ( jwt != NULL ) &&
+         ( sub != NULL ) )
+    {
+        jwt->sub = strdup( sub );
+        result = ( jwt->sub != NULL ) ? EOK : ENOMEM;
+    }
+
+    return result;
+}
+
+/*============================================================================*/
 /*  TJWT_ExpectIssuer                                                         */
 /*!
     Set the expected issuer
@@ -494,7 +575,7 @@ int TJWT_ExpectIssuer( TJWT *jwt, char *iss )
     if ( ( jwt != NULL ) &&
          ( iss != NULL ) )
     {
-        jwt->aud = strdup( iss );
+        jwt->iss = strdup( iss );
         result = ( jwt->iss != NULL ) ? EOK : ENOMEM;
     }
 
@@ -535,49 +616,319 @@ int TJWT_ExpectIssuer( TJWT *jwt, char *iss )
     @retval EINVAL invalid arguments - access should be denied
 
 ==============================================================================*/
-int TJWT_Validate( TJWT *jwt, int64_t time, char *token )
+int TJWT_Validate( TJWT *jwt, int64_t timestamp, char *token )
 {
     int result = EINVAL;
-
-    (void)time;
+    bool rc;
 
     if ( ( jwt != NULL ) &&
          ( token != NULL ) )
     {
-        jwt->keyfile = "public.key";
+        /* set the timestamp */
+        jwt->timestamp = timestamp;
 
-        result = load_key( jwt );
-        if ( result == EOK )
+        rc = split( token, jwt ) ||
+             PrintSections( jwt ) ||
+             parse_header( jwt ) ||
+             load_key( jwt ) ||
+             decode_jwt( jwt ) ||
+             ( jwt->verify == NULL ) ||
+             jwt->verify( jwt ) ||
+             parse_payload( jwt ) ||
+             check_claims( jwt );
+
+        if ( rc == false )
         {
-            result = split( token, jwt );
-            if ( result == EOK )
+            result = EOK;
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  check_claims                                                              */
+/*!
+    Check the expected claims against the received claims
+
+    The check_claims function checks the expected claims against the
+    received claims.  If any of the checks fail, then access will be
+    denied.
+
+    The claims checked are:
+
+    - issuer
+    - audience
+    - subject
+    - timestamp
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to validate
+
+    @retval EOK claims are validated - access allowed
+    @retval EACCES validation failed - access should be denied
+    @retval EINVAL invalid arguments - access should be denied
+
+==============================================================================*/
+static int check_claims( TJWT *jwt )
+{
+    int result = EINVAL;
+    int rc = 0;
+
+    if ( jwt != NULL )
+    {
+        rc = check_iss( jwt ) ||
+             check_sub( jwt ) ||
+             check_aud( jwt ) ||
+             check_time( jwt );
+
+        result = ( rc == 0 ) ? EOK : EACCES;
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  check_iss                                                                 */
+/*!
+    Check the expected issuer against the received claims
+
+    The check_iss function checks the expected issuer against the
+    received claims.  If no issuer is expected, we skip the check.
+    If an issuer is expected and none was specified, then we deny access.
+    If an issuer is expected and it does not exactly match the issuer
+    received in the claims, then we deny access.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to validate
+
+    @retval EOK token is validated - access allowed
+    @retval EACCES validation failed - access should be denied
+    @retval EINVAL invalid arguments - access should be denied
+
+==============================================================================*/
+static int check_iss( TJWT *jwt )
+{
+    int result = EINVAL;
+
+    if ( jwt != NULL )
+    {
+        /* see if we need to check the issuer */
+        if ( jwt->iss != NULL )
+        {
+            /* we need to check the issuer */
+            if ( jwt->claims.iss != NULL )
             {
-                result = PrintSections( jwt );
-                if ( result == EOK )
+                /* check the issuer matches the expected issuer */
+                if ( strcmp( jwt->iss, jwt->claims.iss ) == 0 )
                 {
-                    result = parse_header( jwt );
-                    if ( result == EOK )
+                    result = EOK;
+                }
+                else
+                {
+                    result = EACCES;
+                }
+            }
+            else
+            {
+                /* we are expecting an issuer but none was specified */
+                result = EACCES;
+            }
+        }
+        else
+        {
+            /* we don't care about the issuer */
+            result = EOK;
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  check_sub                                                                 */
+/*!
+    Check the expected subject against the received claims
+
+    The check_sub function checks the expected subject against the
+    received claims.  If no subject is expected, we skip the check.
+    If a subject is expected and none was specified, then we deny access.
+    If a subject is expected and it does not exactly match the subject
+    received in the claims, then we deny access.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to validate
+
+    @retval EOK token is validated - access allowed
+    @retval EACCES validation failed - access should be denied
+    @retval EINVAL invalid arguments - access should be denied
+
+==============================================================================*/
+static int check_sub( TJWT *jwt )
+{
+    int result = EINVAL;
+
+    if ( jwt != NULL )
+    {
+        /* see if we need to check the subject */
+        if ( jwt->sub != NULL )
+        {
+            /* we need to check the subject */
+            if ( jwt->claims.sub != NULL )
+            {
+                /* check the subject matches the expected subject */
+                if ( strcmp( jwt->sub, jwt->claims.sub ) == 0 )
+                {
+                    result = EOK;
+                }
+                else
+                {
+                    result = EACCES;
+                }
+            }
+            else
+            {
+                /* we are expecting a subject but none was specified */
+                result = EACCES;
+            }
+        }
+        else
+        {
+            /* we don't care about the subject */
+            result = EOK;
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  check_aud                                                                 */
+/*!
+    Check the expected audience against the received claims
+
+    The check_aud function checks the expected audience against the
+    received claims.  If no audience is expected, we skip the check.
+    If an audience is expected and none was specified, then we deny access.
+    If an audience is expected and it does not exactly match any of the
+    names in the audience list received in the claims, then we deny access.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to validate
+
+    @retval EOK token is validated - access allowed
+    @retval EACCES validation failed - access should be denied
+    @retval EINVAL invalid arguments - access should be denied
+
+==============================================================================*/
+static int check_aud( TJWT *jwt )
+{
+    int result = EINVAL;
+    int i;
+    char *p;
+
+    if ( jwt != NULL )
+    {
+        /* see if we need to check the audience */
+        if ( jwt->aud != NULL )
+        {
+            /* we need to check the audience */
+            if ( jwt->claims.aud != NULL )
+            {
+                /* assume we don't have access until we do */
+                result = EACCES;
+
+                /* check the audience matches the expected audience */
+                for ( i = 0 ; i < jwt->claims.n_aud; i++ )
+                {
+                    p = jwt->claims.aud[i];
+                    if ( p != NULL )
                     {
-                        result = decode_jwt( jwt );
-                        if ( result == EOK )
+                        if ( strcmp( jwt->aud, p ) == 0 )
                         {
-                            if ( jwt->verify != NULL )
-                            {
-                                result = jwt->verify( jwt );
-                                if ( result == EOK )
-                                {
-                                    result = parse_payload( jwt );
-                                }
-                            }
+                            /* allow access */
+                            result = EOK;
+                            break;
                         }
                     }
                 }
             }
+            else
+            {
+                /* we are expecting an audience but none was specified */
+                result = EACCES;
+            }
+        }
+        else
+        {
+            /* we don't care about the audience */
+            result = EOK;
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  check_time                                                                */
+/*!
+    Check the current time against the time range in the received claims
+
+    The check_time function checks the current time against the
+    time range in the received claims.
+
+    If the current time is less than iat, or nbf then access will be denied.
+
+    If the current time is greater than exp, then access will be denied.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to validate
+
+    @retval EOK token is validated - access allowed
+    @retval EACCES validation failed - access should be denied
+    @retval EINVAL invalid arguments - access should be denied
+
+==============================================================================*/
+static int check_time( TJWT *jwt )
+{
+    int result = EINVAL;
+    int64_t timestamp;
+
+    if ( jwt != NULL )
+    {
+        /* assume time is ok until it isn't */
+        result = EOK;
+
+        timestamp = jwt->timestamp;
+
+        printf("timestamp = %" PRId64 "\n", timestamp );
+        if ( jwt->claims.exp != 0 )
+        {
+            if ( timestamp > jwt->claims.exp + jwt->clockskew )
+            {
+                result = EACCES;
+            }
         }
 
-        if( result != EOK )
+        if ( jwt->claims.iat != 0 )
         {
-            printf("result: %s\n", strerror(result));
+            if ( timestamp < jwt->claims.iat - jwt->clockskew )
+            {
+                result = EACCES;
+            }
+        }
+
+        if ( jwt->claims.nbf != 0 )
+        {
+            if ( timestamp < jwt->claims.nbf - jwt->clockskew )
+            {
+                result = EACCES;
+            }
         }
     }
 
@@ -866,19 +1217,118 @@ static int decode_jwt( TJWT *jwt )
 }
 
 /*============================================================================*/
+/*  get_key_name                                                              */
+/*!
+    Get the fully qualified name of the validation key
+
+    The get_key_name function gets the fully qualified name of the
+    validation key file.  This is constructed from the key store path name
+    and the key file name.
+
+    The key file name is obtained from the user specified keyfile by default,
+    and is overridden by the key id from the JWT 'kid' header.
+
+    @param[in]
+        in
+            pointer to the TJWT object containing the key store path name
+            and the key file name
+
+    @retval pointer to the construct fully qualified key file name
+    @retval NULL if the key name could not be constructed
+
+==============================================================================*/
+static char *get_key_name( TJWT *jwt )
+{
+    size_t len;
+    char *keyfile = NULL;
+    char *filename = NULL;
+    int n = 0;
+
+    if ( ( jwt != NULL ) &&
+         ( ( jwt->kid != NULL ) || ( jwt->keyfile != NULL ) ) )
+    {
+        if ( jwt->keyfile != NULL )
+        {
+            /* set the default key file name */
+            filename = jwt->keyfile;
+        }
+
+        if ( jwt->kid != NULL )
+        {
+            /* override the key file name with the kid */
+            filename = jwt->kid;
+        }
+
+        if ( jwt->keystore != NULL )
+        {
+            n = strlen( jwt->keystore );
+        }
+
+        if ( filename != NULL )
+        {
+            n += strlen( filename );
+        }
+
+        /* allow a / and and NUL terminator */
+        n += 2;
+
+        keyfile = calloc( 1, n );
+        if ( keyfile != NULL )
+        {
+            if ( jwt->keystore != NULL )
+            {
+                /* get the length of the key store string so we can
+                check the last character value */
+                len = strlen( jwt->keystore );
+                if ( jwt->keystore[len-1] == '/' )
+                {
+                    /* construct the fully qualified key file name */
+                    n = sprintf( keyfile,
+                                 "%s%s",
+                                 jwt->keystore,
+                                 filename );
+                }
+                else
+                {
+                    /* construct the fully qualified key file name */
+                    n = sprintf( keyfile,
+                                 "%s/%s",
+                                 jwt->keystore,
+                                 filename );
+                }
+
+                if ( ( n <= 0 ) && ( keyfile != NULL ) )
+                {
+                    free( keyfile );
+                    keyfile = NULL;
+                }
+            }
+            else
+            {
+                keyfile = strdup( filename );
+            }
+        }
+    }
+
+    return keyfile;
+}
+
+/*============================================================================*/
 /*  load_key                                                                  */
 /*!
     Load the key from a file
 
     The load_key function loads the specified JWT validation key
-    into the JWT object.
+    into the JWT object if one has not already been loaded.
 
     @param[in]
         jwt
             pointer to the JWT object
 
 
-    @retval EOK the JWT object was decoded successfully
+    @retval EOK the key was loaded successfully
+    @retval ENOENT cannot open key file
+    @retval ENOTSUP unsupported file type
     @retval EINVAL invalid arguments
 
 ==============================================================================*/
@@ -887,35 +1337,127 @@ static int load_key( TJWT *jwt )
     int result = EINVAL;
     struct stat sb;
     int rc;
-    int fd;
-    ssize_t n;
+    char *keyfile;
 
-    if ( ( jwt != NULL ) &&
-         ( jwt->keyfile != NULL ) )
+    if ( jwt != NULL )
     {
-        rc = stat( jwt->keyfile, &sb );
-        if ( rc != 0 )
+        /* only load the key if we don't already have one */
+        if ( jwt->key == NULL )
         {
-            result = errno;
+            /* get the name of the key */
+            keyfile = get_key_name( jwt );
+            if ( keyfile != NULL )
+            {
+                /* get the length of the file */
+                rc = stat( keyfile, &sb );
+                if ( rc != 0 )
+                {
+                    /* get error from stat function */
+                    result = errno;
+                }
+                else
+                {
+                    /* check file type */
+                    if ( sb.st_mode & S_IFREG )
+                    {
+                        /* allocate memory for the key */
+                        jwt->key = calloc( 1, sb.st_size + 1 );
+                        if ( jwt->key != NULL )
+                        {
+                            /* read the key from the file */
+                            jwt->keylen = sb.st_size;
+                            result = read_key( jwt );
+                        }
+                        else
+                        {
+                            /* memory allocation failure */
+                            result = ENOMEM;
+                        }
+                    }
+                    else
+                    {
+                        /* unsupported file type */
+                        result = ENOTSUP;
+                    }
+                }
+
+                free( keyfile );
+                keyfile = NULL;
+            }
+            else
+            {
+                result = ENOENT;
+            }
         }
         else
         {
-            if ( ( sb.st_mode & S_IFREG ) &&
-                 ( sb.st_size < JWT_MAX_KEY_LEN ) )
-            {
-                fd = open( jwt->keyfile, O_RDONLY );
-                if ( fd != -1 )
-                {
-                    n = read( fd, jwt->key, JWT_MAX_KEY_LEN );
-                    if ( n < JWT_MAX_KEY_LEN )
-                    {
-                        jwt->keylen = n;
-                        result = EOK;
-                    }
+            /* key already loaded */
+            result = EOK;
+        }
+    }
 
-                    close(fd);
-                }
+    return result;
+}
+
+/*============================================================================*/
+/*  read_key                                                                  */
+/*!
+    Read key data from a file
+
+    The read_key function reads the specified JWT validation key
+    into the JWT object.  The memory for the key must have been
+    pre-allocated.
+
+    @param[in]
+        jwt
+            pointer to the JWT object
+
+    @retval EOK the key was loaded successfully
+    @retval EIO read length invalid
+    @retval EINVAL invalid arguments
+
+==============================================================================*/
+static int read_key( TJWT *jwt )
+{
+    int result = EINVAL;
+    int fd;
+    int n;
+
+    if ( ( jwt != NULL ) &&
+         ( jwt->key != NULL ) &&
+         ( jwt->keylen > 0 ) )
+    {
+        /* open the key file */
+        fd = open( jwt->keyfile, O_RDONLY );
+        if ( fd != -1 )
+        {
+            /* read the key into the pre-allocated buffer */
+            n = read( fd, jwt->key, jwt->keylen );
+            if ( n == -1 )
+            {
+                /* get error from read function */
+                result = errno;
             }
+            else if ( (size_t)n == jwt->keylen )
+            {
+                /* read was successful */
+                /* NUL terminate the key */
+                jwt->key[jwt->keylen] = 0;
+                result = EOK;
+            }
+            else
+            {
+                /* unexpected read length */
+                result = EIO;
+            }
+
+            /* close the key file */
+            close(fd);
+        }
+        else
+        {
+            /* get error from open function */
+            result = errno;
         }
     }
 
@@ -1143,6 +1685,7 @@ static int parse_header( TJWT *jwt )
     char *typ;
     bool match;
     size_t len;
+    char *kid;
 
     if ( jwt != NULL )
     {
@@ -1157,23 +1700,31 @@ static int parse_header( TJWT *jwt )
             pHeader = JSON_ProcessBuffer( (char *)(jwt->header) );
             if ( pHeader != NULL )
             {
-                typ = JSON_GetStr( pHeader, "typ" );
-                if ( typ != NULL )
+                /* get the key id from the header */
+                kid = JSON_GetStr( pHeader, "kid" );
+
+                /* process the key id */
+                result = process_kid( jwt, kid );
+                if ( result == EOK )
                 {
-                    match = ( typ[0] == 'j' || typ[0] == 'J' ) &&
-                            ( typ[1] == 'w' || typ[1] == 'W') &&
-                            ( typ[2] == 't' || typ[2] == 'T');
-                    if ( match == true )
+                    typ = JSON_GetStr( pHeader, "typ" );
+                    if ( typ != NULL )
                     {
-                        /* check the algorithm */
-                        alg = JSON_GetStr( pHeader, "alg" );
-                        result = select_algorithm( alg, jwt );
+                        match = ( typ[0] == 'j' || typ[0] == 'J' ) &&
+                                ( typ[1] == 'w' || typ[1] == 'W') &&
+                                ( typ[2] == 't' || typ[2] == 'T');
+                        if ( match == true )
+                        {
+                            /* check the algorithm */
+                            alg = JSON_GetStr( pHeader, "alg" );
+                            result = select_algorithm( alg, jwt );
+                        }
                     }
-                }
-                else
-                {
-                    /* no 'typ' attribute found */
-                    result = ENOTSUP;
+                    else
+                    {
+                        /* no 'typ' attribute found */
+                        result = ENOTSUP;
+                    }
                 }
 
                 /* free the JSON object */
@@ -1184,6 +1735,69 @@ static int parse_header( TJWT *jwt )
                 /* cannot parse JSON header */
                 result = ENOTSUP;
             }
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  process_kid                                                               */
+/*!
+    process a received key ID from the JWT header
+
+    The process_kid function processes a received key ID from the JWT
+    header.  The following scenarios are supported:
+
+    If no key ID is found in the header, but one is requested then
+    access will be denied.
+
+    If the key ID found in the header does not match the one which is
+    requested, then access will be denied.
+
+    If no key is explicitly expected, but one is found in the header,
+    then this key id will be stored in the TJWT object
+
+    If no key is explicitly expected, and none is found, we will
+    allow access for now and assume the caller has specified a
+    validation key or key file name.
+
+    @param[in]
+        jwt
+            pointer to the JWT object containing the header info
+
+    @retval EOK header key ID parsed ok
+    @retval EACCES access denied due to public key ID error
+    @retval ENOMEM memory allocation failure
+    @retval EINVAL invalid argument
+
+==============================================================================*/
+static int process_kid( TJWT *jwt, char *kid )
+{
+    int result = EINVAL;
+
+    if ( jwt != NULL )
+    {
+        if ( ( jwt->kid != NULL ) && ( kid == NULL ) )
+        {
+            /* we are expecting a key ID and none is provided - reject! */
+            result = EACCES;
+        }
+        else if ( ( jwt->kid != NULL )  && ( kid != NULL ) )
+        {
+            /* check if supplied key ID matches the expected key ID */
+            result = strcmp( jwt->kid, kid ) == 0 ? EOK : EACCES;
+        }
+        else if ( kid != NULL )
+        {
+            /* no key id has been specified, copy the one from the header */
+            jwt->kid = strdup( kid );
+            result = ( jwt->kid != NULL ) ? EOK : ENOMEM;
+        }
+        else
+        {
+            /* no key id requested or found.  */
+            result = EOK;
         }
     }
 
@@ -1904,10 +2518,10 @@ int TJWT_Free( TJWT *jwt )
             jwt->claims.sub = NULL;
         }
 
-        if ( jwt->pubkeystore != NULL )
+        if ( jwt->keystore != NULL )
         {
-            free( jwt->pubkeystore );
-            jwt->pubkeystore = NULL;
+            free( jwt->keystore );
+            jwt->keystore = NULL;
         }
 
         if ( jwt->kid != NULL )
@@ -1916,10 +2530,10 @@ int TJWT_Free( TJWT *jwt )
             jwt->kid = NULL;
         }
 
-        if ( jwt->pubkey != NULL )
+        if ( jwt->key != NULL )
         {
-            free( jwt->pubkey );
-            jwt->pubkey = NULL;
+            free( jwt->key );
+            jwt->key = NULL;
         }
 
         if ( jwt->aud != NULL )
@@ -1932,6 +2546,12 @@ int TJWT_Free( TJWT *jwt )
         {
             free( jwt->iss );
             jwt->iss = NULL;
+        }
+
+        if ( jwt->sub != NULL )
+        {
+            free( jwt->sub );
+            jwt->sub = NULL;
         }
 
         /* clear the JWT object ready for re-use */
