@@ -150,8 +150,47 @@ static const JWTTestCase testcases[] = {
         .errors = (1L << TJWT_ERR_INVALID_ISS) |
                   (1L << TJWT_ERR_CLAIM_VALIDATION)
     },
-
-
+    {
+        .id = "Test 5",
+        .token = "token1",
+        .keyfilename = "public.key",
+        .sub = "installer",
+        .aud = "dev1",
+        .time = 1698829980,
+        .valid = false,
+        .errors = (1L << TJWT_ERR_INVALID_SUB) |
+                  (1L << TJWT_ERR_CLAIM_VALIDATION)
+    },
+    {
+        .id = "Test 6",
+        .token = "token1",
+        .keyfilename = "public.key",
+        .sub = "spwr_installer",
+        .aud = "dev6",
+        .time = 1698829980,
+        .valid = false,
+        .errors = (1L << TJWT_ERR_INVALID_AUD) |
+                  (1L << TJWT_ERR_CLAIM_VALIDATION)
+    },
+    {
+        .id = "Test 7",
+        .token = "token1",
+        .keyfilename = "public.key",
+        .time = 1697729980,
+        .valid = false,
+        .errors = (1L << TJWT_ERR_TIME_BEFORE_IAT) |
+                  (1L << TJWT_ERR_TIME_BEFORE_NBF) |
+                  (1L << TJWT_ERR_CLAIM_VALIDATION)
+    },
+    {
+        .id = "Test 8",
+        .token = "token1",
+        .keyfilename = "public.key",
+        .time = 1698831024,
+        .valid = false,
+        .errors = (1L << TJWT_ERR_TOKEN_EXPIRED) |
+                  (1L << TJWT_ERR_CLAIM_VALIDATION)
+    }
 };
 
 /*==============================================================================
