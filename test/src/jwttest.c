@@ -49,6 +49,8 @@ SOFTWARE.
 #include <unistd.h>
 #include <stdio.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <tjwt/tjwt.h>
 
 /*==============================================================================
@@ -60,13 +62,97 @@ SOFTWARE.
         Private types
 ==============================================================================*/
 
+typedef struct _test_case
+{
+    /*! test identifier */
+    char *id;
+
+    /* expected to validate? */
+    bool valid;
+
+    /* key store name */
+    char *keystore;
+
+    /* key file name */
+    char *keyfilename;
+
+    /*! expected audience */
+    char *aud;
+
+    /*! expected subject */
+    char *sub;
+
+    /*! JWT */
+    char *token;
+
+    /*! expected issuer */
+    char *iss;
+
+    /*! errors */
+    uint32_t errors;
+
+    /*! current time */
+    int64_t time;
+
+} JWTTestCase;
+
 /*==============================================================================
         Private function declarations
 ==============================================================================*/
 
+static int RunTest( const JWTTestCase *testcase );
+static char *load_token( char *name );
+
 /*==============================================================================
         Private file scoped variables
 ==============================================================================*/
+
+/*! list of test cases to run */
+static const JWTTestCase testcases[] = {
+
+    {
+        .id = "Test 1",
+        .token = "token1",
+        .keyfilename = "public.key",
+        .iss = "sunpower.com",
+        .sub = "spwr_installer",
+        .aud = "dev1",
+        .time = 1698829980,
+        .valid = true,
+        .errors = 0
+    },
+    {
+        .id = "Test 2",
+        .token = "no_token",
+        .keyfilename = "public.key",
+        .iss = "sunpower.com",
+        .sub = "spwr_installer",
+        .aud = "dev1",
+        .time = 1698829980,
+        .valid = false,
+        .errors = (1L << TJWT_ERR_NO_TOKEN)
+    },
+    {
+        .id = "Test 3",
+        .token = "token1",
+        .valid = false,
+        .errors = (1L << TJWT_ERR_KEY_FILENAME)
+    },
+    {
+        .id = "Test 4",
+        .token = "token1",
+        .keyfilename = "public.key",
+        .iss = "spwr",
+        .sub = "spwr_installer",
+        .aud = "dev1",
+        .time = 1698829980,
+        .valid = false,
+        .errors = (1L << TJWT_ERR_INVALID_ISS) |
+                  (1L << TJWT_ERR_CLAIM_VALIDATION)
+    },
+
+
+};
 
 /*==============================================================================
         Public function definitions
@@ -75,9 +161,9 @@ SOFTWARE.
 /*============================================================================*/
 /*  main                                                                      */
 /*!
-    Main entry point for the jwt decoder
+    Main entry point for the jwt test cases
 
-    The main function runs the jwt decoder
+    The main function runs the jwt test cases
 
     @param[in]
         argc
@@ -93,37 +179,196 @@ SOFTWARE.
 ==============================================================================*/
 int main(int argc, char **argv)
 {
-    TJWT *jwt = NULL;
-    time_t now = 1698829980;
+    size_t i;
+    size_t passed = 0;
+    size_t failed = 0;
+    size_t total = 0;
 
-    if ( argc != 2 )
+    (void)argc;
+    (void)argv;
+
+    total = sizeof(testcases) / sizeof( JWTTestCase );
+
+    for( i = 0; i < total; i++ )
     {
-        printf( "usage: %s <encoded jwt>\n", argv[0] );
-        exit(1);
+        if ( RunTest( &testcases[i] ) == EOK )
+        {
+            passed++;
+        }
+        else
+        {
+            failed++;
+        }
     }
 
-    jwt = TJWT_Init();
+    printf("%ld tests passed out of %ld\n", passed, total );
+    printf("%ld tests failed\n", failed);
 
-    TJWT_SetKeyFile( jwt, "public.key" );
-    TJWT_ExpectIssuer( jwt, "sunpower.com" );
-    TJWT_ExpectSubject( jwt, "spwr_installer" );
-    TJWT_ExpectAudience( jwt, "dev1" );
-
-    if ( TJWT_Validate( jwt, now, argv[1] ) == EOK )
+    if ( failed == 0 )
     {
-        TJWT_PrintClaims( jwt, STDOUT_FILENO );
-
-        printf("Validation successful!!! - Access Granted\n");
+        exit( 0 );
     }
     else
     {
-        TJWT_OutputErrors( jwt, STDOUT_FILENO );
-        printf("Validation failed - Access Denied\n");
+        exit( 1 );
+    }
+}
+
+/*============================================================================*/
+/*  RunTest                                                                   */
+/*!
+    Run a single test
+
+    The RunTest function runs a single test from the test cases list
+
+    @param[in]
+        testcase
+            pointer to the testcase to run
+
+    @return EOK test passed
+    @retval EINVAL test failed
+
+==============================================================================*/
+static int RunTest( const JWTTestCase *testcase )
+{
+    TJWT *jwt;
+    int result = EINVAL;
+    int valid;
+    uint32_t errors;
+    char *token;
+
+    if ( testcase != NULL )
+    {
+        jwt = TJWT_Init();
+        if ( jwt != NULL )
+        {
+            if ( testcase->id != NULL )
+            {
+                dprintf(STDOUT_FILENO, "Test: %s ... ", testcase->id );
+            }
+            else
+            {
+                dprintf(STDOUT_FILENO, "Test: 'unnamed' ... ");
+            }
+
+            token = load_token( testcase->token );
+
+            if ( testcase->keyfilename != NULL )
+            {
+                TJWT_SetKeyFile( jwt, testcase->keyfilename );
+            }
+
+            if ( testcase->iss != NULL )
+            {
+                TJWT_ExpectIssuer( jwt, testcase->iss );
+            }
+
+            if ( testcase->sub != NULL )
+            {
+                TJWT_ExpectSubject( jwt, testcase->sub );
+            }
+
+            if ( testcase->aud != NULL )
+            {
+                TJWT_ExpectAudience( jwt, testcase->aud );
+            }
+
+            if ( TJWT_Validate( jwt, testcase->time, token ) == EOK )
+            {
+                valid = true;
+            }
+            else
+            {
+                valid = false;
+            }
+
+            /* free the input token */
+            free( token );
+            token = NULL;
+
+            errors = TJWT_GetErrors( jwt );
+
+            if ( ( testcase->valid == valid ) &&
+                 ( testcase->errors == errors ) )
+            {
+                dprintf( STDOUT_FILENO, "PASSED\n");
+                result = EOK;
+            }
+            else
+            {
+                dprintf( STDOUT_FILENO, "FAILED\n");
+                TJWT_PrintClaims( jwt, STDERR_FILENO );
+                TJWT_OutputErrors( jwt, STDERR_FILENO );
+                result = EINVAL;
+            }
+
+            TJWT_Free( jwt );
+        }
     }
 
-    TJWT_Free( jwt );
+    return result;
+}
 
-    exit( 0 );
+/*============================================================================*/
+/*  load_token                                                                */
+/*!
+    Load a test token
+
+    The load_token function loads a test token from a file on the disk
+    The token is allocated on the heap and must be freed by the calling
+    process.
+
+    @param[in]
+        name
+            name of the token file
+
+    @return pointer to the token data
+    @retval NULL if the token could not be read
+
+==============================================================================*/
+static char *load_token( char *name )
+{
+    char *token = NULL;
+    struct stat sb;
+    int rc;
+    int fd;
+    size_t len;
+    ssize_t n;
+
+    if ( name != NULL )
+    {
+        /* get the length of the file */
+        rc = stat( name, &sb );
+        if ( rc == 0 )
+        {
+            /* check file type */
+            if ( sb.st_mode & S_IFREG )
+            {
+                /* allocate memory for the key */
+                len = sb.st_size;
+                token = calloc( 1, len + 1 );
+                if ( token != NULL )
+                {
+                    fd = open( name, O_RDONLY );
+                    if ( fd != -1 )
+                    {
+                        /* read the key into the pre-allocated buffer */
+                        n = read( fd, token, len );
+                        if ( (size_t)n != len )
+                        {
+                            free( token );
+                            token = NULL;
+                        }
+
+                        /* close the token file */
+                        close(fd);
+                    }
+                }
+            }
+        }
+    }
+
+    return token;
 }
 
 /*! @}

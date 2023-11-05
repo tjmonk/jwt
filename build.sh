@@ -5,3 +5,6 @@ cmake ..
 make
 sudo make install
 cd ..
+cd test
+jwttest
+cd ..

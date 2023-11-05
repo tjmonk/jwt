@@ -1464,7 +1464,7 @@ static char *get_key_name( TJWT *jwt )
                 else
                 {
                     keyfile = strdup( filename );
-                    if ( keyfile != NULL )
+                    if ( keyfile == NULL )
                     {
                         jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
                     }
