@@ -46,6 +46,7 @@ SOFTWARE.
 
 #include <errno.h>
 #include <stdlib.h>
+#include <inttypes.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <time.h>
@@ -240,8 +241,8 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("%ld tests passed out of %ld\n", passed, total );
-    printf("%ld tests failed\n", failed);
+    printf("%zu tests passed out of %zu\n", passed, total );
+    printf("%zu tests failed\n", failed);
 
     if ( failed == 0 )
     {
