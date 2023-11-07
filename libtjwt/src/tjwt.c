@@ -1195,9 +1195,17 @@ int TJWT_PrintSections( TJWT *jwt, int fd )
     if ( ( jwt != NULL ) &&
          ( fd != -1 ) )
     {
-        dprintf( fd, "header: %s\n", jwt->sections[JWT_HEADER_SECTION] );
-        dprintf( fd, "payload: %s\n", jwt->sections[JWT_PAYLOAD_SECTION] );
-        dprintf( fd, "signature: %s\n", jwt->sections[JWT_SIGNATURE_SECTION] );
+        dprintf( fd, "header [%zu]: %s\n",
+            jwt->sectionlen[JWT_HEADER_SECTION],
+            jwt->sections[JWT_HEADER_SECTION] );
+
+        dprintf( fd, "payload [%zu]: %s\n",
+            jwt->sectionlen[JWT_PAYLOAD_SECTION],
+            jwt->sections[JWT_PAYLOAD_SECTION] );
+
+        dprintf( fd, "signature [%zu]: %s\n",
+            jwt->sectionlen[JWT_SIGNATURE_SECTION],
+            jwt->sections[JWT_SIGNATURE_SECTION] );
 
         result = EOK;
     }

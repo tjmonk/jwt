@@ -337,6 +337,7 @@ static int RunTest( const JWTTestCase *testcase )
             else
             {
                 dprintf( STDOUT_FILENO, "FAILED\n");
+                TJWT_PrintSections( jwt, STDERR_FILENO );
                 TJWT_PrintClaims( jwt, STDERR_FILENO );
                 TJWT_OutputErrors( jwt, STDERR_FILENO );
                 result = EINVAL;

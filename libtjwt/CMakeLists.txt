@@ -20,7 +20,6 @@ else()
 	list(APPEND TJWT_SOURCES src/ssl3.c)
 endif()
 
-
 add_library( ${PROJECT_NAME} SHARED
 	${TJWT_SOURCES}
 )
