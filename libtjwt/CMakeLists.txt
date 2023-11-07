@@ -7,8 +7,22 @@ project(tjwt
 
 include(GNUInstallDirs)
 
+find_package(OpenSSL REQUIRED)
+
+set(TJWT_SOURCES )
+list(APPEND TJWT_SOURCES src/tjwt.c)
+
+if( ${OPENSSL_VERSION} VERSION_LESS 3 )
+	message("Using OpenSSL 1.x")
+	list(APPEND TJWT_SOURCES src/ssl1.c)
+else()
+	message("Using OpenSSL 3.x")
+	list(APPEND TJWT_SOURCES src/ssl3.c)
+endif()
+
+
 add_library( ${PROJECT_NAME} SHARED
-	src/tjwt.c
+	${TJWT_SOURCES}
 )
 
 set_target_properties( ${PROJECT_NAME} PROPERTIES

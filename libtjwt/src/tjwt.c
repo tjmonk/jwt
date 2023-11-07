@@ -62,6 +62,8 @@ SOFTWARE.
 #include <fcntl.h>
 #include <errno.h>
 #include "tjwt/tjwt.h"
+#include "tjwt_obj.h"
+#include "ssl.h"
 
 /*==============================================================================
         Private definitions
@@ -70,16 +72,6 @@ SOFTWARE.
 #ifndef EOK
 /*! success response */
 #define EOK ( 0 )
-#endif
-
-#ifndef JWT_MAX_SECTION_LEN
-/*! maximum length of each section of a JWT */
-#define JWT_MAX_SECTION_LEN ( 1024 )
-#endif
-
-#ifndef JWT_MAX_NUM_SECTIONS
-/*! maximum supported sections in a JWT */
-#define JWT_MAX_NUM_SECTIONS ( 3 )
 #endif
 
 /*! JWT Header section number */
@@ -91,113 +83,9 @@ SOFTWARE.
 /*! JWT Signature section number */
 #define JWT_SIGNATURE_SECTION ( 2 )
 
-/*! max JWT header length */
-#ifndef JWT_MAX_HEADER_LEN
-#define JWT_MAX_HEADER_LEN ( 128 )
-#endif
-
-/*! max JWT payload length */
-#ifndef JWT_MAX_PAYLOAD_LEN
-#define JWT_MAX_PAYLOAD_LEN ( 256 )
-#endif
-
-/*! max JWT signature length */
-#ifndef JWT_MAX_SIG_LEN
-#define JWT_MAX_SIG_LEN ( 1024 )
-#endif
-
 /*==============================================================================
         Private types
 ==============================================================================*/
-
-/*! JWT Object */
-typedef struct _jwt_obj
-{
-    /* JWT Verification Key filename */
-    char *keyfile;
-
-    /*! SHA algorithm */
-    const EVP_MD *sha;
-
-    /*! padding type */
-    int padding;
-
-    /*! pointer to the full encoded data input */
-    const char *pToken;
-
-    /*! length of the full encoded jwt object */
-    size_t len;
-
-    /*! length of the signed part of the JWT object */
-    size_t signedlen;
-
-    /*! sections of a split JSON Web Token */
-    uint8_t sections[JWT_MAX_NUM_SECTIONS][JWT_MAX_SECTION_LEN];
-
-    /*! stores the length of each encoded JWT section */
-    size_t sectionlen[JWT_MAX_NUM_SECTIONS];
-
-    /*! base64 decoded header */
-    uint8_t header[JWT_MAX_HEADER_LEN];
-
-    /*! decoded header length */
-    size_t headerlen;
-
-    /*! base64 decoded payload */
-    uint8_t payload[JWT_MAX_PAYLOAD_LEN];
-
-    /*! length of the decoded payload */
-    size_t payloadlen;
-
-    /*! base64 decoded signature */
-    uint8_t sig[JWT_MAX_SIG_LEN];
-
-    /*! length of the decoded signature */
-    size_t siglen;
-
-    /*! pointer to the validating key */
-    char *key;
-
-    /*! length of the validation key */
-    size_t keylen;
-
-    /*! verification function */
-    int (*verify)( struct _jwt_obj * );
-
-    /*! verification algorithm name */
-    char *alg;
-
-    /*! pointer to the JSON payload */
-    JNode *pPayload;
-
-    /* pointer to the name of the key store */
-    char *keystore;
-
-    /*! pointer to the key ID string */
-    char *kid;
-
-    /*! pointer to the expected audience string */
-    char *aud;
-
-    /*! pointer to the expected issuer string */
-    char *iss;
-
-    /*! pointer to the expected subject string */
-    char *sub;
-
-    /*! JWT claims */
-    JWTClaims claims;
-
-    /*! clock skew */
-    int clockskew;
-
-    /*! time */
-    int64_t timestamp;
-
-    /*! error code */
-    uint32_t error;
-
-} TJWT;
 
 /*! algorithm map */
 typedef struct _alg_map
@@ -221,7 +109,6 @@ typedef struct _alg_map
 
 static int split( const char *in, TJWT *jwt );
 static int decode_jwt( TJWT *jwt );
-static int verify_rsa( TJWT *jwt );
 static int load_key( TJWT *jwt );
 static int read_key( TJWT *jwt );
 
@@ -1639,98 +1526,6 @@ static int read_key( TJWT *jwt )
     }
 
     return result;
-}
-
-/*============================================================================*/
-/*  verify_rsa                                                                */
-/*!
-    RSA verification of the JWT
-
-    The verify_rsa function verifies the JWT using RSA public key
-    verification.
-
-    @param[in]
-        jwt
-            pointer to the JWT object
-
-    @retval EOK the JWT object was verified successfully
-    @retval EINVAL invalid arguments
-
-==============================================================================*/
-static int verify_rsa( TJWT *jwt )
-{
-    int result = EINVAL;
-
-    EVP_MD_CTX *md_ctx     = NULL;
-    EVP_PKEY_CTX *pkey_ctx = NULL;
-    EVP_PKEY *pkey         = NULL;
-    BIO *keybio            = NULL;
-    int rc;
-
-    if ( jwt != NULL )
-    {
-        /* Read the RSA key in from a PEM encoded blob of memory */
-        keybio = BIO_new_mem_buf(jwt->key, (int) jwt->keylen);
-        if (!keybio)
-        {
-            return EINVAL;
-        }
-
-        pkey = PEM_read_bio_PUBKEY(keybio, NULL, NULL, NULL);
-        if (!pkey)
-        {
-            BIO_free(keybio);
-            return EINVAL;
-        }
-
-        if ( EVP_PKEY_id( pkey ) != EVP_PKEY_RSA )
-        {
-            jwt->error |= ( 1L << TJWT_ERR_KEY_TYPE );
-            return EINVAL;
-        }
-
-        md_ctx = EVP_MD_CTX_create();
-        if ( md_ctx != NULL )
-        {
-            rc = EVP_DigestVerifyInit( md_ctx,
-                                       &pkey_ctx,
-                                       jwt->sha,
-                                       NULL,
-                                       pkey);
-            if ( rc == 1 )
-            {
-                rc = EVP_PKEY_CTX_set_rsa_padding( pkey_ctx, jwt->padding );
-                if ( rc > 0 )
-                {
-                    rc = EVP_DigestVerifyUpdate( md_ctx,
-                                                 jwt->pToken,
-                                                 jwt->signedlen);
-                    if ( rc == 1 )
-                    {
-                        rc = EVP_DigestVerifyFinal( md_ctx,
-                                                    jwt->sig,
-                                                    jwt->siglen );
-                        if ( rc == 1 )
-                        {
-                            result = EOK;
-                        }
-                    }
-                }
-            }
-        }
-
-        BIO_free(keybio);
-        EVP_PKEY_free(pkey);
-        EVP_MD_CTX_free(md_ctx);
-
-        if ( result != EOK )
-        {
-            jwt->error |= ( 1L << TJWT_ERR_SIGNATURE_VERIFY );
-        }
-    }
-
-    return result;
-
 }
 
 /*============================================================================*/
