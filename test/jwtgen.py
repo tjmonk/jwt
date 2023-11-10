@@ -1,15 +1,60 @@
 import jwt
-private_key=b"-----BEGIN RSA PRIVATE KEY-----\n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\n-----END RSA PRIVATE KEY-----\n"
-public_key=b"-----BEGIN PUBLIC KEY-----\nMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAy/69mpyt3fZBvj9JqEGH\nqvOB+AeucpinYQB94sQulLl6TFhXPwFoYTpSKGya0MwiomDWbMH/akdPS1Cyt02n\ndhCd8LH3LXyUDnk6/CaU/TG8Po6/UdoBUcWZWKIJscUSHd1ykQ/AUcKWBJN+eZny\nApB0nOVqP+DTfukSKUipDkLByZ4q/7AmVb6ytEvLfSQIZqCa3fqLK+gyTgvjq+/U\nhzjv+O3vsqURPgmEWoLUq/xFYm6agSgrjbIuNm1EcOlX4iGVHg1YkTe5laGdMGU2\nZ/30rsSBKMWXPhV4ahiNRA8UPE95i7VDvZoXEnSasOdeFTPTiMjYTwLyksk1UQNp\nMMYHpgHKcZr4iITWrykMyJUIsGDQkzpsVUHAyKFGb3E4qgNo1/LOax/lTaD7UIGZ\nRiWPhk5bjkk9KYgCElMwNelVJSmwPndliNotQpWXJURGZs8i2F6QtKtXICJX97Ux\nmHfeoQ3z12M2bMpQ+JI6m2LK2hExWVsv2Wee/R0vNk3PG/Z7KShBcmeF0naPgeKa\nBnoehaTqIiL8rS1JsU03ITJj8y2Bgb9I+z/cWZ2iPYODbOt96awokTeD+XIJq2Lu\nrvd9mCAxv0IzrT4DGz07W3r1ZeYCIXapu/Dk+kyWOyfpY8yAuKbGfjOI1WQRaw/T\n0jSZQlzc9kFVT0nz1kOF/5cCAwEAAQ==\n-----END PUBLIC KEY-----\n"
+import uuid
+import time
+import sys
+import getopt
 
-encoded=jwt.encode({
-    "sub" : "spwr_installer",
-    "iss" : "sunpower.com",
-    "aud" : ["dev1","dev2","dev3"],
-    "iat" : 1698729908,
-    "nbf" : 1698729900,
-    "exp" : 1698829990,
-    "jti" : "7c1899fc-c886-4a8d-b428-537d1feaab24"
-}, private_key, algorithm="RS256")
+pubkeyfilename="public.key"
+privkeyfilename="private.key"
+
+# default payload values
+sub = "spwr_installer"
+iss = "sunpower"
+aud = "dev1"
+t = 86400
+decode = False
+kid = "987e3afb-49d2-4c11-bfcf-6a6514261ef7"
+
+options, arguments = getopt.getopt(
+    sys.argv[1:],
+    's:i:a:t:dk:',
+    ["sub=","iss=","aud=","time=","decode","kid="])
+
+for o,a in options:
+    if o in ( "-s", "--sub"):
+        sub = a
+    if o in ( "-i", "--iss" ):
+        iss = a
+    if o in ( "-a", "--aud" ):
+        aud = a
+    if o in ( "-t", "--time" ):
+        t = int(a)
+    if o in ( "-d", "--decode" ):
+        decode = True
+    if o in ( "-k", "--kid" ):
+        kid = a
+
+now = round(time.time())
+
+with open(pubkeyfilename, "r+") as pubkeyfile:
+    public_key=pubkeyfile.read()
+
+with open(privkeyfilename, "r+") as privkeyfile:
+    private_key=privkeyfile.read()
+
+payload = {
+    "sub" : sub,
+    "iss" : iss,
+    "iat" : now-1,
+    "aud" : aud,
+    "exp" : now + t,
+    "nbf" : now - 120,
+    "jti" : str(uuid.uuid4())
+}
+
+encoded=jwt.encode(payload, private_key, algorithm="RS256", headers={"kid":kid})
 print(encoded)
-#decoded = jwt.decode(encoded, public_key, algorithms=["RS256"])
+
+if decode:
+    decoded = jwt.decode(encoded, public_key, audience=aud, algorithms=["RS256"])
+    print(decoded)

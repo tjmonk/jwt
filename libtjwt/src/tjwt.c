@@ -110,7 +110,7 @@ typedef struct _alg_map
 static int split( const char *in, TJWT *jwt );
 static int decode_jwt( TJWT *jwt );
 static int load_key( TJWT *jwt );
-static int read_key( TJWT *jwt );
+static int read_key( TJWT *jwt, char *keyfile );
 
 static char *get_key_name( TJWT *jwt );
 
@@ -1433,7 +1433,7 @@ static int load_key( TJWT *jwt )
                         {
                             /* read the key from the file */
                             jwt->keylen = sb.st_size;
-                            result = read_key( jwt );
+                            result = read_key( jwt, keyfile );
                         }
                         else
                         {
@@ -1481,23 +1481,28 @@ static int load_key( TJWT *jwt )
         jwt
             pointer to the JWT object
 
+    @param[in]
+        keyfile
+            pointer to the fully qualifed key file name
+
     @retval EOK the key was loaded successfully
     @retval EIO read length invalid
     @retval EINVAL invalid arguments
 
 ==============================================================================*/
-static int read_key( TJWT *jwt )
+static int read_key( TJWT *jwt, char *keyfile )
 {
     int result = EINVAL;
     int fd;
     int n;
 
     if ( ( jwt != NULL ) &&
+         ( keyfile != NULL ) &&
          ( jwt->key != NULL ) &&
          ( jwt->keylen > 0 ) )
     {
         /* open the key file */
-        fd = open( jwt->keyfile, O_RDONLY );
+        fd = open( keyfile, O_RDONLY );
         if ( fd != -1 )
         {
             /* read the key into the pre-allocated buffer */
