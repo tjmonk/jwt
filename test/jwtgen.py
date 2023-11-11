@@ -53,7 +53,7 @@ payload = {
 }
 
 encoded=jwt.encode(payload, private_key, algorithm="RS256", headers={"kid":kid})
-print(encoded)
+sys.stdout.write(encoded)
 
 if decode:
     decoded = jwt.decode(encoded, public_key, audience=aud, algorithms=["RS256"])
