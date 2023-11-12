@@ -161,8 +161,8 @@ int main(int argc, char **argv)
             TJWT_OutputErrors( jwt, STDERR_FILENO );
 
             dprintf( STDOUT_FILENO,
-                     ( result == EOK ) ? "Token is VALID!"
-                                       : "Token is INVALID!");
+                     ( result == EOK ) ? "Token is VALID!\n"
+                                       : "Token is INVALID!\n");
         }
 
         TJWT_Free( jwt );
