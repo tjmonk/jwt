@@ -77,9 +77,14 @@ typedef struct jwtState
     /*! location of the key store */
     char *keystore;
 
-    /*! JWT */
-    char *token;
+    /*! key file validation name */
+    char *keyfile;
 
+    /*! JWT */
+    char *jwt;
+
+    /*! fake POSIX time */
+    int64_t faketime;
 } JWTState;
 
 #ifndef EOK
@@ -152,10 +157,21 @@ int main(int argc, char **argv)
             TJWT_ExpectAudience( jwt, state.aud );
         }
 
-        result = TJWT_Validate( jwt, now, state.token );
+        if ( state.keyfile != NULL )
+        {
+            /* set the key file used for JWT signature validation */
+            TJWT_SetKeyFile( jwt, state.keyfile );
+        }
+
+        /* get the time used for token validation */
+        now = ( state.faketime != 0 ) ? state.faketime : time(NULL);
+
+        /* validate the token */
+        result = TJWT_Validate( jwt, now, state.jwt );
 
         if ( state.verbose == true )
         {
+            /* generate verbose debug output */
             TJWT_PrintSections( jwt, STDERR_FILENO );
             TJWT_PrintClaims( jwt, STDERR_FILENO );
             TJWT_OutputErrors( jwt, STDERR_FILENO );
@@ -165,10 +181,11 @@ int main(int argc, char **argv)
                                        : "Token is INVALID!\n");
         }
 
+        /* free resources used by the JWT */
         TJWT_Free( jwt );
     }
 
-    return ( result == EOK ) ? 1 : 0;
+    return ( result == EOK ) ? 0 : 1;
 }
 
 /*============================================================================*/
@@ -191,7 +208,7 @@ static void usage( char *cmdname )
     {
         fprintf(stderr,
                 "usage: %s [-v] [-h] [-i issuer] [-a audience] [-k keystore] "
-                " [-t token]\n"
+                " [-j JWT] [-f keyfile] [-t time]\n"
                 " [-v] : verbose mode\n"
                 " [-h] : display this help\n"
                 " [-i issuer : "
@@ -200,8 +217,12 @@ static void usage( char *cmdname )
                     "specify the audience which must be present in the JWT\n"
                 " [-k keystore] : "
                     "specify the location of the validation key store\n"
-                " [-t token] : "
-                    "specify the JSON Web Token to validate\n",
+                " [-j JWT] : "
+                    "specify the JSON Web Token to validate\n"
+                " [-f keyfile] : "
+                    "specify the keyfile used for JWT signature validation\n"
+                " [-t time] : "
+                    "specify the fake POSIX time to use for JWT validation\n",
                 cmdname );
     }
 }
@@ -234,7 +255,7 @@ static int ProcessOptions( int argC, char *argV[], JWTState *pState )
 {
     int c;
     int result = EINVAL;
-    const char *options = "vht:a:k:i:";
+    const char *options = "vht:a:k:i:f:j:";
 
     if( ( pState != NULL ) &&
         ( argV != NULL ) )
@@ -268,8 +289,16 @@ static int ProcessOptions( int argC, char *argV[], JWTState *pState )
                     pState->keystore = optarg;
                     break;
 
+                case 'j':
+                    pState->jwt = optarg;
+                    break;
+
+                case 'f':
+                    pState->keyfile = optarg;
+                    break;
+
                 case 't':
-                    pState->token = optarg;
+                    pState->faketime = atol(optarg);
                     break;
 
                 default:
