@@ -379,19 +379,18 @@ static char *load_token( char *name )
     if ( name != NULL )
     {
         /* get the length of the file */
-        rc = stat( name, &sb );
-        if ( rc == 0 )
+        fd = open( name, O_RDONLY );
+        if ( fd != -1 )
         {
-            /* check file type */
-            if ( sb.st_mode & S_IFREG )
+            rc = fstat( fd, &sb );
+            if ( rc == 0 )
             {
-                /* allocate memory for the key */
-                len = sb.st_size;
-                token = calloc( 1, len + 1 );
-                if ( token != NULL )
+                if ( sb.st_mode & S_IFREG )
                 {
-                    fd = open( name, O_RDONLY );
-                    if ( fd != -1 )
+                    /* allocate memory for the key */
+                    len = sb.st_size;
+                    token = calloc( 1, len + 1 );
+                    if ( token != NULL )
                     {
                         /* read the key into the pre-allocated buffer */
                         n = read( fd, token, len );
