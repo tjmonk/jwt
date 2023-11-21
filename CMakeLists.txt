@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-set(TJWT_VERSION 0.1)
+set(TJWT_VERSION 0.3)
 
 project(TJWT
     VERSION ${TJWT_VERSION}
