@@ -638,13 +638,13 @@ int TJWT_Validate( TJWT *jwt, int64_t timestamp, char *token )
 
             rc = split( token, jwt ) ||
                 parse_header( jwt ) ||
-                load_key( jwt ) ||
                 decode_jwt( jwt ) ||
+                parse_payload( jwt ) ||
+                check_kid( jwt ) ||
+                load_key( jwt ) ||
                 ( jwt->verify == NULL ) ||
                 jwt->verify( jwt ) ||
-                parse_payload( jwt ) ||
-                check_claims( jwt ) ||
-                check_kid( jwt );
+                check_claims( jwt );
 
             if ( rc == false )
             {
@@ -1309,6 +1309,7 @@ static int decode_jwt( TJWT *jwt )
                              jwt->sectionlen[JWT_PAYLOAD_SECTION],
                              jwt->payload,
                              sizeof jwt->payload );
+
         jwt->payloadlen = len;
         if ( len == 0 )
         {
@@ -1320,6 +1321,7 @@ static int decode_jwt( TJWT *jwt )
                              jwt->sectionlen[JWT_SIGNATURE_SECTION],
                              jwt->sig,
                              sizeof jwt->sig );
+
         jwt->siglen = len;
         if ( len == 0 )
         {
@@ -1811,9 +1813,9 @@ static int parse_header( TJWT *jwt )
             result = ENOTSUP;
         }
     }
-
     return result;
 }
+
 
 /*============================================================================*/
 /*  select_algorithm                                                          */
