@@ -123,6 +123,9 @@ typedef struct _jwt_obj
     /* pointer to the name of the key store */
     char *keystore;
 
+    /*! pointer to the expected key ID string */
+    char *expected_kid;
+
     /*! pointer to the key ID string */
     char *kid;
 

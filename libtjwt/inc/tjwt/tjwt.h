@@ -168,6 +168,9 @@ typedef enum _jwt_err
     /*! error parsing JWT payload */
     TJWT_ERR_PARSE_PAYLOAD = 30,
 
+    /*! key id error */
+    TJWT_ERR_KID = 31,
+
     /*! max error number */
     TJWT_ERR_MAX
 

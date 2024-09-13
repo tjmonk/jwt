@@ -138,9 +138,10 @@ static int process_jti( TJWT *jwt );
 static int process_nbf( TJWT *jwt );
 static int process_exp( TJWT *jwt );
 static int process_iat( TJWT *jwt );
-static int process_kid( TJWT *jwt, char *kid );
+static int process_kid( TJWT *jwt );
 
 static int check_claims( TJWT *jwt );
+static int check_kid( TJWT *jwt );
 static int check_iss( TJWT *jwt );
 static int check_sub( TJWT *jwt );
 static int check_aud( TJWT *jwt );
@@ -190,7 +191,8 @@ static const char *TJWT_Errors[] =
     /* 27 */ "invalid JWT type",
     /* 28 */ "unsupported validation algorithm",
     /* 29 */ "JWT header parse error",
-    /* 30 */ "JWT payload parse error"
+    /* 30 */ "JWT payload parse error",
+    /* 31 */ "JWT Key ID Error"
 };
 
 /*==============================================================================
@@ -321,8 +323,8 @@ int TJWT_ExpectKid( TJWT *jwt, char *kid )
     if ( ( jwt != NULL ) &&
          ( kid != NULL ) )
     {
-        jwt->kid = strdup( kid );
-        if ( jwt->kid != NULL )
+        jwt->expected_kid = strdup( kid );
+        if ( jwt->expected_kid != NULL )
         {
             result = EOK;
         }
@@ -641,7 +643,8 @@ int TJWT_Validate( TJWT *jwt, int64_t timestamp, char *token )
                 ( jwt->verify == NULL ) ||
                 jwt->verify( jwt ) ||
                 parse_payload( jwt ) ||
-                check_claims( jwt );
+                check_claims( jwt ) ||
+                check_kid( jwt );
 
             if ( rc == false )
             {
@@ -762,6 +765,67 @@ static int check_iss( TJWT *jwt )
         else
         {
             /* we don't care about the issuer */
+            result = EOK;
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  check_kid                                                                 */
+/*!
+    Check the expected kid against the received kid
+
+    The check_kid function checks the expected kid against the
+    received kid.  If no kid is expected, we skip the check.
+    If a kid is expected and none was specified, then we deny access.
+    If a kid is expected and it does not exactly match the received kid
+    then we deny access.
+
+    @param[in]
+        jwt
+            pointer to the TJWT object to validate
+
+    @retval EOK token is validated - access allowed
+    @retval EACCES validation failed - access should be denied
+    @retval EINVAL invalid arguments - access should be denied
+
+==============================================================================*/
+static int check_kid( TJWT *jwt )
+{
+    int result = EINVAL;
+
+    if ( jwt != NULL )
+    {
+        /* see if we need to check the kid */
+        if ( jwt->expected_kid != NULL )
+        {
+            /* we need to check the kid */
+            if ( jwt->kid != NULL )
+            {
+                /* check the kid matches the expected kid */
+                if ( strcmp( jwt->expected_kid, jwt->kid ) == 0 )
+                {
+                    result = EOK;
+                }
+                else
+                {
+                    /* kid does not match expectation */
+                    jwt->error |= ( 1L << TJWT_ERR_KID );
+                    result = EACCES;
+                }
+            }
+            else
+            {
+                /* we are expecting a kid but none was specified */
+                jwt->error |= ( 1L << TJWT_ERR_KID );
+                result = EACCES;
+            }
+        }
+        else
+        {
+            /* we don't care about the kid */
             result = EOK;
         }
     }
@@ -1656,7 +1720,7 @@ static size_t b64url_decode( const uint8_t *in,
     parse the JWT header
 
     The parse_header function parses the JWT header and extracts tne
-    alg and type attributes.
+    alg, type, and kid attributes.
 
     @param[in]
         jwt
@@ -1679,6 +1743,8 @@ static int parse_header( TJWT *jwt )
 
     if ( jwt != NULL )
     {
+        result = EOK;
+
         /* decode the header */
         len = b64url_decode( jwt->sections[JWT_HEADER_SECTION],
                              jwt->sectionlen[JWT_HEADER_SECTION],
@@ -1690,11 +1756,18 @@ static int parse_header( TJWT *jwt )
             pHeader = JSON_ProcessBuffer( (char *)(jwt->header) );
             if ( pHeader != NULL )
             {
-                /* get the key id from the header */
+                /* get the (optional) key id from the header */
                 kid = JSON_GetStr( pHeader, "kid" );
+                if ( kid != NULL )
+                {
+                    jwt->kid = strdup( kid );
+                    if ( jwt->kid == NULL )
+                    {
+                        jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
+                        result = ENOMEM;
+                    }
+                }
 
-                /* process the key id */
-                result = process_kid( jwt, kid );
                 if ( result == EOK )
                 {
                     typ = JSON_GetStr( pHeader, "typ" );
@@ -1732,68 +1805,10 @@ static int parse_header( TJWT *jwt )
                 result = ENOTSUP;
             }
         }
-    }
-
-    return result;
-}
-
-/*============================================================================*/
-/*  process_kid                                                               */
-/*!
-    process a received key ID from the JWT header
-
-    The process_kid function processes a received key ID from the JWT
-    header.  The following scenarios are supported:
-
-    If no key ID is found in the header, but one is requested then
-    access will be denied.
-
-    If the key ID found in the header does not match the one which is
-    requested, then access will be denied.
-
-    If no key is explicitly expected, but one is found in the header,
-    then this key id will be stored in the TJWT object
-
-    If no key is explicitly expected, and none is found, we will
-    allow access for now and assume the caller has specified a
-    validation key or key file name.
-
-    @param[in]
-        jwt
-            pointer to the JWT object containing the header info
-
-    @retval EOK header key ID parsed ok
-    @retval EACCES access denied due to public key ID error
-    @retval ENOMEM memory allocation failure
-    @retval EINVAL invalid argument
-
-==============================================================================*/
-static int process_kid( TJWT *jwt, char *kid )
-{
-    int result = EINVAL;
-
-    if ( jwt != NULL )
-    {
-        if ( ( jwt->kid != NULL ) && ( kid == NULL ) )
-        {
-            /* we are expecting a key ID and none is provided - reject! */
-            result = EACCES;
-        }
-        else if ( ( jwt->kid != NULL )  && ( kid != NULL ) )
-        {
-            /* check if supplied key ID matches the expected key ID */
-            result = strcmp( jwt->kid, kid ) == 0 ? EOK : EACCES;
-        }
-        else if ( kid != NULL )
-        {
-            /* no key id has been specified, copy the one from the header */
-            jwt->kid = strdup( kid );
-            result = ( jwt->kid != NULL ) ? EOK : ENOMEM;
-        }
         else
         {
-            /* no key id requested or found.  */
-            result = EOK;
+            jwt->error |= ( 1L << TJWT_ERR_PARSE_HEADER );
+            result = ENOTSUP;
         }
     }
 
@@ -1893,6 +1908,7 @@ static int parse_payload( TJWT *jwt )
             process_nbf( jwt );
             process_exp( jwt );
             process_iat( jwt );
+            process_kid( jwt );
 
             JSON_Free( jwt->pPayload );
             jwt->pPayload = NULL;
@@ -2223,6 +2239,52 @@ static int process_iat( TJWT *jwt )
         if ( result == EOK )
         {
             jwt->claims.iat = n;
+        }
+    }
+
+    return result;
+}
+
+/*============================================================================*/
+/*  process_kid                                                               */
+/*!
+    Get the value of the 'kid' attribute from the JWT body JSON
+
+    The process_kid function gets the value of the string 'kid' attribute
+    from the JWT body JSON and stores it in the JWT's claim set object.
+    Normally a kid is passed in the header, but in this implementation
+    was also allow it to be passed in the body since some JWT generators
+    cannot specify a client provided kid in the header.
+
+    @param[in,out]
+        jwt
+            pointer to the JWT object to be populated with the kid value
+
+    @retval EOK the integer attribute was successfully retrieved
+    @retval ENOENT the integer attribute was not found
+    @retval EINVAL invalid argument
+
+==============================================================================*/
+static int process_kid( TJWT *jwt )
+{
+    int result = EINVAL;
+    char *kid;
+
+    if ( jwt != NULL )
+    {
+        kid = get_claim_string( jwt, "kid" );
+        if ( kid != NULL )
+        {
+            jwt->kid = strdup( kid );
+            if ( jwt->kid != NULL )
+            {
+                result = EOK;
+            }
+            else
+            {
+                result = ENOMEM;
+                jwt->error |= ( 1L << TJWT_ERR_MEMORY_ALLOC );
+            }
         }
     }
 
