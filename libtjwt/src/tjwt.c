@@ -130,7 +130,7 @@ static int process_aud_array( TJWT *jwt, JArray *pArray );
 static int add_aud_claim( TJWT *jwt, JWTClaims *claims, char *aud, int max_aud);
 
 static char *get_claim_string( TJWT *jwt, char *name );
-static int get_claim_long( TJWT *jwt, char *name, long *n );
+static int get_claim_i64( TJWT *jwt, char *name, long *n );
 
 static int process_iss( TJWT *jwt );
 static int process_sub( TJWT *jwt );
@@ -1927,11 +1927,11 @@ static int parse_payload( TJWT *jwt )
 }
 
 /*============================================================================*/
-/*  get_claim_long                                                            */
+/*  get_claim_i64                                                             */
 /*!
     Get an integer attribute from the processed JWT body
 
-    The get_claim_long function searches the processed JWT body JSON for an
+    The get_claim_i64 function searches the processed JWT body JSON for an
     integer value attribute with the specified name.
 
     @param[in]
@@ -1944,14 +1944,14 @@ static int parse_payload( TJWT *jwt )
 
     @param[in,out]
         n
-            pointer to a location to store the retrieved long integer value
+            pointer to a location to store the retrieved i64 integer value
 
     @retval EOK the long integer value was retrieved ok
     @retval ENOENT the attribute was not found
     @retval EINVAL invalid argument
 
 ==============================================================================*/
-static int get_claim_long( TJWT *jwt, char *name, long *n )
+static int get_claim_i64( TJWT *jwt, char *name, int64_t *n )
 {
     static int result;
 
@@ -1959,7 +1959,7 @@ static int get_claim_long( TJWT *jwt, char *name, long *n )
          ( name != NULL ) &&
          ( n != NULL ) )
     {
-        result = ( JSON_GetLong( jwt->pPayload, name, n ) == 0 ) ? EOK : ENOENT;
+        result = ( JSON_GetI64( jwt->pPayload, name, n ) == 0 ) ? EOK : ENOENT;
     }
 
     return result;
@@ -2163,11 +2163,11 @@ static int process_jti( TJWT *jwt )
 static int process_nbf( TJWT *jwt )
 {
     int result = EINVAL;
-    long n;
+    int64_t n;
 
     if ( jwt != NULL )
     {
-        result = get_claim_long( jwt, "nbf",  &n );
+        result = get_claim_i64( jwt, "nbf",  &n );
         if ( result == EOK )
         {
             jwt->claims.nbf = n;
@@ -2198,11 +2198,11 @@ static int process_nbf( TJWT *jwt )
 static int process_exp( TJWT *jwt )
 {
     int result = EINVAL;
-    long n;
+    int64_t n;
 
     if ( jwt != NULL )
     {
-        result = get_claim_long( jwt, "exp",  &n );
+        result = get_claim_i64( jwt, "exp",  &n );
         if ( result == EOK )
         {
             jwt->claims.exp = n;
@@ -2233,11 +2233,11 @@ static int process_exp( TJWT *jwt )
 static int process_iat( TJWT *jwt )
 {
     int result = EINVAL;
-    long n;
+    int64_t n;
 
     if ( jwt != NULL )
     {
-        result = get_claim_long( jwt, "iat",  &n );
+        result = get_claim_i64( jwt, "iat",  &n );
         if ( result == EOK )
         {
             jwt->claims.iat = n;
