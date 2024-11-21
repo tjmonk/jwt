@@ -130,7 +130,7 @@ static int process_aud_array( TJWT *jwt, JArray *pArray );
 static int add_aud_claim( TJWT *jwt, JWTClaims *claims, char *aud, int max_aud);
 
 static char *get_claim_string( TJWT *jwt, char *name );
-static int get_claim_i64( TJWT *jwt, char *name, long *n );
+static int get_claim_i64( TJWT *jwt, char *name, int64_t *n );
 
 static int process_iss( TJWT *jwt );
 static int process_sub( TJWT *jwt );
